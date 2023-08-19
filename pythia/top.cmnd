@@ -15,12 +15,13 @@ Top:all = on
 Top:qq2tq(t:W) = off
 Top:ffbar2tqbar(s:W) = off
 
+! force W decays to taus
 24:onMode = off
 24:onIfAny = 15
 
 
 ! 2) Settings related to the run
-Main:numberOfEvents = 1000
+Main:numberOfEvents = 10000
 Next:numberCount = 1000            ! print message every n events
 Next:numberShowLHA = 1             ! print LHA information n times
 Next:numberShowInfo = 1            ! print event information n times

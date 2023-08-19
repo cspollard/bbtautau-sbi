@@ -118,9 +118,6 @@ namespace Rivet {
         ntautag += tautag;
       }
 
-      cout << nbtag << " btags" << endl;
-      cout << ntautag << " tautags" << endl;
-
       if (nbtag < 2 || ntautag < 2) vetoEvent;
 
       for (int i = 0; i < jets.size(); i++) {
