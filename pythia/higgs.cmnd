@@ -1,0 +1,38 @@
+! Command file for testing different functionalities of main93
+! Note that for the various output functionalities to work,
+! HepMC, YODA, RIVET and ROOT respectively needs to either
+! be installed to system path, or appended before compiling.
+
+! 1) Settings related to the physics processes generated. Here
+Beams:idA = 2212
+Beams:idB = 2212
+Beams:eCM = 14000.
+
+PhaseSpace:mHatMin = 200
+
+HiggsSM:all = on
+
+! force higgs/W/Z to decay via bs and taus
+23:onMode = off
+24:onMode = off
+25:onMode = off
+23:onIfAny = 5 15
+24:onIfAny = 5 15
+25:onIfAny = 5 15 24
+
+
+! 2) Settings related to the run
+Main:numberOfEvents = 1000
+Next:numberCount = 1000            ! print message every n events
+Next:numberShowLHA = 1             ! print LHA information n times
+Next:numberShowInfo = 1            ! print event information n times
+Next:numberShowProcess = 1         ! print process record n times
+Next:numberShowEvent = 1           ! print event record n times
+Stat:showPartonLevel = on          ! additional statistics on MPI
+
+! 3) Settings related to output
+Main:runRivet = on
+Main:analyses = tautaujets:csvname->higgs.csv
+Main:writeHepMC = off           ! Write .hepmc events to a file.
+Main:writeRoot = off            ! Write particle level output to a root file
+Main:outputLog = on             ! Put all printed output to a log file.
