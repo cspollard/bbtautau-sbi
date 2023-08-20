@@ -1,12 +1,10 @@
 from flax.linen import Module, Dense, Sequential, relu, softmax
 from jax.random import PRNGKey
 import jax.numpy as numpy
-from jax import Array
-import optax
+import jax.random as random
 
 import awkward
 from numpy import genfromtxt
-from numpy.lib.recfunctions import structured_to_unstructured
 import numpy as onp
 
 from einops import repeat, rearrange, reduce
@@ -55,29 +53,72 @@ def forward(params, inputs, mask):
   unflattened = perevt.apply(params["perevt"], flattened)
   unflattened = rearrange(unflattened, "(b e) f -> b e f", b=batchsize)
 
+  # here we also need an event mask...
   summed = reduce(unflattened, "b e f -> b f", "sum")
 
   return inference.apply(params["inference"], summed)
 
 
-arr = genfromtxt("../top.csv", delimiter=",", skip_header=1)
+def readarr(fname):
+  arr = genfromtxt(fname, delimiter=",", skip_header=1)
 
-events = awkward.run_lengths(arr[:,0])
+  events = awkward.run_lengths(arr[:,0])
 
-arr = awkward.unflatten(arr, events)
+  arr = awkward.unflatten(arr, events)
 
-arr = \
-  awkward.fill_none \
-  ( awkward.pad_none( arr , 8 , clip=True , axis=1 )
-  , [999]*6
-  , axis=1
-  )
+  arr = \
+    awkward.fill_none \
+    ( awkward.pad_none( arr , 8 , clip=True , axis=1 )
+    , [999]*6
+    , axis=1
+    )
 
-# need to smear b-tagging and tau id
-arr = awkward.to_regular(arr).to_numpy().astype(numpy.float32)[:,:,1:]
+  # TODO
+  # need to smear b-tagging and tau id
+  arr = awkward.to_regular(arr).to_numpy().astype(numpy.float32)[:,:,1:]
 
-mask = onp.any(arr == 999, axis=2)
-mask = repeat(mask, "e j -> b e j", b=1)
-arr = repeat(arr, "e j f -> b e j f", b=1)
+  mask = numpy.any(arr == 999, axis=2)
 
-print(forward(params, arr, mask))
+  return arr, mask
+
+
+datasets = { k : readarr("../" + k + ".csv") for k in [ "top" , "higgs" ] }
+
+
+def sample(k, a, lams):
+  k1 , k2 = random.split(k)
+
+  lamtot = lams.sum()
+  n = random.poisson(k1, lamtot)
+  
+  ps = lams / lamtot
+  return random.choice(k2, a, shape=(n,), p=ps)
+
+
+def gen(k , mu):
+  k1 , k2 = random.split(k)
+
+  l = len(datasets["top"][0])
+  topidxs = \
+    sample \
+    ( k1
+    , numpy.arange(l)
+    , lams = 0.02 * numpy.ones((l,))
+    )
+
+  l = len(datasets["higgs"][0])
+  higgsidxs = \
+    sample \
+    ( k2
+    , numpy.arange(l)
+    , lams = mu * 0.005 * numpy.ones((l,))
+    )
+
+  data = [ datasets["top"][0][topidxs] , datasets["higgs"][0][higgsidxs] ]
+  masks = [ datasets["top"][1][topidxs] , datasets["higgs"][1][higgsidxs] ]
+
+  return numpy.concatenate(data) , numpy.concatenate(masks)
+
+print(len(gen(PRNGKey(0), 2)[0]))
+print(len(gen(PRNGKey(1), 100)[0]))
+print(len(gen(PRNGKey(2), 10)[0]))
