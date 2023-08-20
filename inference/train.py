@@ -3,6 +3,12 @@ from jax.random import PRNGKey
 import jax.numpy as numpy
 from jax import Array
 import optax
+
+import awkward
+from numpy import genfromtxt
+from numpy.lib.recfunctions import structured_to_unstructured
+import numpy as onp
+
 from deepset import deepset
 
 
@@ -29,5 +35,24 @@ params = { "embed" : embps , "infer" : infps }
 
 ds = deepset(emb, inf)
 
-print(ds(params, numpy.ones((2, 4, 4)), numpy.ones((2, 4))))
+arr = genfromtxt("../top.csv", delimiter=",", skip_header=1)
 
+events = awkward.run_lengths(arr[:,0])
+
+arr = awkward.unflatten(arr, events)
+
+arr = \
+  awkward.fill_none \
+  ( awkward.pad_none( arr , 8 , clip=True , axis=1 )
+  , [999]*6
+  , axis=1
+  )
+
+arr = awkward.to_regular(arr).to_numpy().astype(numpy.float32)[:,:,1:]
+
+mask = onp.any(arr == 999, axis=2)
+
+print(arr.shape)
+print(mask.shape)
+# TODO
+# batching and training

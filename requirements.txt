@@ -1,3 +1,4 @@
 flax
 optax
 einops
+awkward
