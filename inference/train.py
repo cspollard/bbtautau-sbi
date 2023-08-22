@@ -85,6 +85,9 @@ def readarr(fname):
 datasets = { k : readarr("../" + k + ".csv") for k in [ "top" , "higgs" ] }
 
 
+# TODO
+# perhaps better to big a huge bank of events and randomly mask based on poisson...
+
 def sample(k, a, lams):
   k1 , k2 = random.split(k)
 
@@ -95,7 +98,7 @@ def sample(k, a, lams):
   return random.choice(k2, a, shape=(n,), p=ps)
 
 
-def gen(k , mu):
+def gen(k , mu , nmax):
   k1 , k2 = random.split(k)
 
   l = len(datasets["top"][0])
@@ -118,6 +121,7 @@ def gen(k , mu):
   masks = [ datasets["top"][1][topidxs] , datasets["higgs"][1][higgsidxs] ]
 
   return numpy.concatenate(data) , numpy.concatenate(masks)
+
 
 print(len(gen(PRNGKey(0), 2)[0]))
 print(len(gen(PRNGKey(1), 100)[0]))
