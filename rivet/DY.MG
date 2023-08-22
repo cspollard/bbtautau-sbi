@@ -1,3 +1,4 @@
+set nb_core 4
 generate p p > ta+ ta- b b~ / h t t~
 output DY
 launch DY
@@ -9,4 +10,3 @@ set mmbb 50
 set mmll 50
 set etab 2.7
 set ptb 10
-set nb_core 4

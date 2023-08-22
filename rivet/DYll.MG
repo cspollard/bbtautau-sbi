@@ -1,7 +1,7 @@
 set nb_core 4
-generate p p > ta+ ta- vt vt~ b b~ / a z h
-output top
-launch top
+generate p p > l+ l- / z t t~
+output DY
+launch DY
 shower=Pythia8
 set nevents 500000
 set ebeam1 7000
