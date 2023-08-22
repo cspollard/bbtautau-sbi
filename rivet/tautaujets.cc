@@ -78,15 +78,15 @@ namespace Rivet {
 
       csv
         << "eventnumber"
-        << " , "
+        << ","
         << "btagged"
-        << " , "
+        << ","
         << "tautagged"
-        << " , "
+        << ","
         << "px"
-        << " , "
+        << ","
         << "py"
-        << " , "
+        << ","
         << "pz"
         << endl;
 
@@ -127,15 +127,15 @@ namespace Rivet {
 
         csv
           << eventnumber
-          << " , "
+          << ","
           << int(btag)
-          << " , "
+          << ","
           << int(tautag)
-          << " , "
+          << ","
           << j.px()
-          << " , "
+          << ","
           << j.py()
-          << " , "
+          << ","
           << j.pz()
           << endl;
 

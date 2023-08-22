@@ -2,3 +2,4 @@ flax
 optax
 einops
 awkward
+six
