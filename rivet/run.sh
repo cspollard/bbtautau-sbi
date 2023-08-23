@@ -1,5 +1,5 @@
 
-rivet --pwd \
-  -a tautaujets:csvname=$1.csv \
-  -o $1.yoda \
-  $1/Events/run_01/tag_1_pythia8_events.hepmc.gz
+for f in top HH ZH higgs DY
+do
+  source runPythiaRivet.sh $f &
+done
