@@ -3,7 +3,7 @@ import jax.numpy as numpy
 import jax.random as random
 import jax
 
-from flax.linen import Module, Dense, Sequential, relu, softmax
+from flax.linen import Module, Dense, Sequential, LayerNorm, relu, softmax
 
 import optax
 
@@ -13,10 +13,13 @@ import numpy as onp
 
 from einops import repeat, rearrange, reduce
 
-NEPOCHS = 10
-EPOCHSIZE = 128
+
+NEPOCHS = 100
+NBATCHES = 128
 BATCHSIZE = 64
 NMAX = 512
+LR = 1e-3
+NTEST = 256
 
 
 def splitkey(k):
@@ -29,23 +32,23 @@ def id(xs):
   return xs
 
 
-def MLP(features, activations):
+def MLP(features, norms, activations):
   laypairs = \
-    [ [ Dense(feats) , act ] \
-      for feats , act in zip(features, activations)
+    [ [ Dense(feats) , norm , act ] \
+      for feats , norm , act in zip(features, norms, activations)
     ]
 
   return Sequential([x for pair in laypairs for x in pair])
 
 
-perjet = MLP([32]*4, [relu]*3 + [softmax])
-perevt = MLP([32]*4, [relu]*3 + [softmax])
-inference = MLP([32]*4 + [2], [relu]*4 + [id])
+perjet = MLP([16]*4 , [LayerNorm()]*3 + [id] , [relu]*3 + [softmax])
+perevt = MLP([32]*4 , [LayerNorm()]*3 + [id] , [relu]*3 + [softmax])
+inference = MLP([32]*4 + [2] , [LayerNorm()]*4 + [id] , [relu]*4 + [id])
 
 
 params = \
   { "perjet" : perjet.init(PRNGKey(0), numpy.ones((1, 5)))
-  , "perevt" : perevt.init(PRNGKey(0), numpy.ones((1, 32)))
+  , "perevt" : perevt.init(PRNGKey(0), numpy.ones((1, 16)))
   , "inference" : inference.init(PRNGKey(1), numpy.ones((1, 32)))
   }
 
@@ -81,11 +84,12 @@ def forward(params, inputs, evtmasks, jetmasks):
 
 def readarr(fname):
   arr = genfromtxt(fname, delimiter=",", skip_header=1)
-
+  
   events = awkward.run_lengths(arr[:,0])
 
   arr = awkward.unflatten(arr, events)
 
+  # divide px, py, pz by 20 GeV
   arr = \
     awkward.fill_none \
     ( awkward.pad_none( arr , 8 , clip=True , axis=1 )
@@ -98,6 +102,8 @@ def readarr(fname):
   arr = awkward.to_regular(arr).to_numpy().astype(numpy.float32)[:,:,1:]
 
   mask = numpy.any(arr == 999, axis=2)
+
+  arr[:,:,2:5] = arr[:,:,2:5] / 20e3
 
   return arr, mask
 
@@ -159,6 +165,9 @@ def appmu(k, mus, maxn):
 def prior(k, b):
   return 10 * random.uniform(k, shape=(b,))
 
+def testprior(k, b):
+  return 2.5 + 5 * random.uniform(k, shape=(b,))
+
 
 
 ####################
@@ -188,13 +197,27 @@ def step(params, opt_state, batch, evtmasks, jetmasks, labels):
   return params, opt_state, loss_value
 
 
-optimizer = optax.adam(learning_rate=1e-4)
+sched = optax.cosine_onecycle_schedule(NEPOCHS*NBATCHES, 1)
+
+optimizer = \
+  optax.chain \
+  ( optax.scale(-LR)
+  , optax.scale_by_adam()
+  , optax.scale_by_schedule(sched)
+  )
+
 opt_state = optimizer.init(params)
 
 knext = PRNGKey(10)
 
+k , knext = splitkey(knext)
+testlabels = testprior(k, NTEST)
+k , knext = splitkey(knext)
+testidxs , testevtmasks = appmu(k, testlabels, NMAX)
+testbatch , testjetmasks = evts[testidxs] , masks[testidxs]
+
 for _ in range(NEPOCHS):
-  for _ in range(EPOCHSIZE):
+  for _ in range(NBATCHES):
     k, knext = splitkey(knext)
     labels = prior(k, BATCHSIZE)
     k, knext = splitkey(knext)
@@ -205,9 +228,9 @@ for _ in range(NEPOCHS):
       step(params, opt_state, batch, evtmasks, jetmasks, labels)
 
 
-  outs = numpy.exp(forward(params, batch, evtmasks, jetmasks))
+  outs = numpy.exp(forward(params, testbatch, testevtmasks, testjetmasks))
 
-  pull = (outs[:,0] - labels) / outs[:,1]
+  pull = (outs[:,0] - testlabels) / outs[:,1]
   print("sample pulls")
   print(pull[:5])
   print()
