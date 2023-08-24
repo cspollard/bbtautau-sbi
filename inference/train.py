@@ -10,6 +10,10 @@ import numpy as onp
 from einops import repeat, rearrange, reduce
 
 
+def arr(xs):
+  return numpy.array(xs)
+
+
 def id(xs):
   return xs
 
@@ -35,7 +39,7 @@ params = \
   }
 
 
-def forward(params, inputs, mask):
+def forward(params, inputs, evtmasks, jetmasks):
   batchsize = inputs.shape[0]
   nevt = inputs.shape[1]
   njets = inputs.shape[2]
@@ -45,16 +49,20 @@ def forward(params, inputs, mask):
   unflattened = perjet.apply(params["perjet"], flattened)
   unflattened = rearrange(unflattened, "(b e j) f -> b e j f", b=batchsize, e=nevt)
 
-  expandedmask = repeat(mask, "b e j -> b e j f", f=unflattened.shape[3])
+  expandedjetmasks = \
+    repeat(jetmasks, "b e j -> b e j f", f=unflattened.shape[3])
 
-  summed = reduce(unflattened * expandedmask, "b e j f -> b e f", "sum")
+  summed = reduce(unflattened * expandedjetmasks, "b e j f -> b e f", "sum")
 
   flattened = rearrange(summed, "b e f -> (b e) f")
   unflattened = perevt.apply(params["perevt"], flattened)
   unflattened = rearrange(unflattened, "(b e) f -> b e f", b=batchsize)
 
+  expandedevtmasks = \
+    repeat(evtmasks, "b e -> b e f", f=unflattened.shape[2])
+
   # here we also need an event mask...
-  summed = reduce(unflattened, "b e f -> b f", "sum")
+  summed = reduce(unflattened * expandedevtmasks, "b e f -> b f", "sum")
 
   return inference.apply(params["inference"], summed)
 
@@ -82,47 +90,62 @@ def readarr(fname):
   return arr, mask
 
 
-datasets = { k : readarr("../" + k + ".csv") for k in [ "top" , "higgs" ] }
+datasets = { k : readarr(k + ".csv") for k in [ "top" , "HH" ] }
 
 
-# TODO
-# perhaps better to big a huge bank of events and randomly mask based on poisson...
+# lams : (b, e)
+def sample(k, lams, maxn):
+  b , e = lams.shape
 
-def sample(k, a, lams):
-  k1 , k2 = random.split(k)
+  k1 , k2 , k3 = random.split(k, 3)
 
-  lamtot = lams.sum()
-  n = random.poisson(k1, lamtot)
-  
-  ps = lams / lamtot
-  return random.choice(k2, a, shape=(n,), p=ps)
+  # lamtot : (b,)
+  lamtot = reduce(lams, "b w -> b", "sum")
 
+  bernoulliprobs = repeat(lamtot / maxn, "b -> b m", m=maxn)
 
-def gen(k , mu , nmax):
-  k1 , k2 = random.split(k)
+  # mask : (b, maxn)
+  mask = random.bernoulli(k2, bernoulliprobs)
 
-  l = len(datasets["top"][0])
-  topidxs = \
-    sample \
-    ( k1
-    , numpy.arange(l)
-    , lams = 0.02 * numpy.ones((l,))
-    )
+  # ps : (b, e)
+  ps = lams / repeat(lamtot, "b -> b e", e=e)
 
-  l = len(datasets["higgs"][0])
-  higgsidxs = \
-    sample \
-    ( k2
-    , numpy.arange(l)
-    , lams = mu * 0.005 * numpy.ones((l,))
-    )
+  # tmpidxs : (b, e)
+  tmpidxs = numpy.arange(e)
 
-  data = [ datasets["top"][0][topidxs] , datasets["higgs"][0][higgsidxs] ]
-  masks = [ datasets["top"][1][topidxs] , datasets["higgs"][1][higgsidxs] ]
+  # TODO
+  # this is probably very slow.
 
-  return numpy.concatenate(data) , numpy.concatenate(masks)
+  # idxs : (b , maxn)
+  idxs = []
+  nextk = k3
+  for ib in range(b):
+    thisk , nextk = random.split(nextk)
+    idxs.append(random.choice(thisk, tmpidxs, shape=(maxn,), p=ps[ib]))
+
+  tmp = numpy.stack(idxs, axis=0) 
+  return tmp , mask
 
 
-print(len(gen(PRNGKey(0), 2)[0]))
-print(len(gen(PRNGKey(1), 100)[0]))
-print(len(gen(PRNGKey(2), 10)[0]))
+ttlams = 100 / len(datasets["top"][0]) * numpy.ones((len(datasets["top"][0]),))
+hhlams = 10 / len(datasets["HH"][0]) * numpy.ones((len(datasets["HH"][0]),))
+evts = numpy.concatenate([ datasets["top"][0] , datasets["HH"][0] ])
+masks = numpy.concatenate([ datasets["top"][1] , datasets["HH"][1] ])
+
+
+def appmu(k, mus, maxn):
+  b = mus.shape[0]
+  tmptt = repeat(ttlams, "e -> b e", b=b)
+  tmphh = repeat(hhlams, "e -> b e", b=b)
+  mus = repeat(mus, "b -> b e", e=hhlams.shape[0])
+
+  lams = numpy.concatenate([ tmptt , mus * tmphh ], axis=1)
+
+  return sample(k, lams, maxn)
+
+
+evtidxs , evtmasks = appmu(PRNGKey(0), arr([1, 2, 3]), 256)
+
+batch , jetmasks = evts[evtidxs], masks[evtidxs]
+
+print(forward(params, batch, evtmasks, jetmasks))
