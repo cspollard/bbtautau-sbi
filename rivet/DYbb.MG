@@ -1,7 +1,7 @@
 set nb_core 4
 generate p p > ta+ ta- b b~ / h t t~
-output DY
-launch DY
+output DYbb
+launch DYbb
 set nevents 500000
 set ebeam1 7000
 set ebeam2 7000

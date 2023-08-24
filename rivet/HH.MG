@@ -1,5 +1,6 @@
 set nb_core 4
-generate p p > h h > ta+ ta- b b~
+import model loop_sm
+generate g g > h h QED<=2 [noborn=QCD]
 output HH
 launch HH
 set nevents 500000
