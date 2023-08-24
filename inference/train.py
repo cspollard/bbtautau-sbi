@@ -13,11 +13,11 @@ from numpy import genfromtxt
 from einops import repeat, rearrange, reduce
 
 
-NEPOCHS = 100
+NEPOCHS = 50
 NBATCHES = 128
 BATCHSIZE = 64
 NMAX = 512
-LR = 1e-3
+LR = 3e-4
 NTEST = 1024
 
 
@@ -31,18 +31,18 @@ def id(xs):
   return xs
 
 
-def MLP(features, norms, activations):
+def MLP(features, activations):
   laypairs = \
-    [ [ Dense(feats) , norm , act ] \
-      for feats , norm , act in zip(features, norms, activations)
+    [ [ Dense(feats) , act ] \
+      for feats , act in zip(features, activations)
     ]
 
   return Sequential([x for pair in laypairs for x in pair])
 
 
-perjet = MLP([32]*4 , [id]*4 , [relu]*3 + [softmax])
-perevt = MLP([32]*4 , [id]*4 , [relu]*3 + [softmax])
-inference = MLP([32]*4 + [2] , [id]*5 , [relu]*4 + [id])
+perjet = MLP([32]*6 , [relu]*5 + [softmax])
+perevt = MLP([32]*6 , [relu]*5 + [softmax])
+inference = MLP([32]*6 + [2] , [relu]*6 + [id])
 
 
 params = \
@@ -214,7 +214,7 @@ k , knext = splitkey(knext)
 testidxs , testevtmasks = appmu(k, testlabels, NMAX)
 testbatch , testjetmasks = evts[testidxs] , masks[testidxs]
 
-for _ in range(NEPOCHS):
+for epoch in range(NEPOCHS):
   for _ in range(NBATCHES):
     k, knext = splitkey(knext)
     labels = prior(k, BATCHSIZE)
@@ -247,5 +247,5 @@ for _ in range(NEPOCHS):
   print("std pull")
   print(numpy.std(pull))
   print()
-  print("end epoch")
+  print("end epoch %02d" % epoch)
   print()
