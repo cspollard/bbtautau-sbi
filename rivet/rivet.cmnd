@@ -13,3 +13,6 @@ Main:runRivet = on              ! Run Rivet (specify analyses below)
 Main:writeHepMC = off           ! Write .hepmc events to a file.
 Main:writeRoot = off            ! Write particle level output to a root file
 Main:outputLog = on             ! Put all printed output to a log file.
+
+25:onMode = off
+25:onIfAny = 5 15
