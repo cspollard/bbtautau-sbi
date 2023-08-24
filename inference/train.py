@@ -13,7 +13,7 @@ from numpy import genfromtxt
 from einops import repeat, rearrange, reduce
 
 
-NEPOCHS = 50
+NEPOCHS = 200
 NBATCHES = 128
 BATCHSIZE = 64
 NMAX = 512
@@ -40,15 +40,15 @@ def MLP(features, activations):
   return Sequential([x for pair in laypairs for x in pair])
 
 
-perjet = MLP([32]*6 , [relu]*5 + [softmax])
-perevt = MLP([32]*6 , [relu]*5 + [softmax])
-inference = MLP([32]*6 + [2] , [relu]*6 + [id])
+perjet = MLP([64]*6 , [relu]*5 + [softmax])
+perevt = MLP([64]*6 , [relu]*5 + [softmax])
+inference = MLP([64]*6 + [2] , [relu]*6 + [id])
 
 
 params = \
   { "perjet" : perjet.init(PRNGKey(0), numpy.ones((1, 5)))
-  , "perevt" : perevt.init(PRNGKey(0), numpy.ones((1, 32)))
-  , "inference" : inference.init(PRNGKey(1), numpy.ones((1, 32)))
+  , "perevt" : perevt.init(PRNGKey(0), numpy.ones((1, 64)))
+  , "inference" : inference.init(PRNGKey(1), numpy.ones((1, 64)))
   }
 
 
