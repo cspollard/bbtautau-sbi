@@ -1,7 +1,11 @@
-from flax.linen import Module, Dense, Sequential, relu, softmax
 from jax.random import PRNGKey
 import jax.numpy as numpy
 import jax.random as random
+import jax
+
+from flax.linen import Module, Dense, Sequential, relu, softmax
+
+import optax
 
 import awkward
 from numpy import genfromtxt
@@ -9,10 +13,17 @@ import numpy as onp
 
 from einops import repeat, rearrange, reduce
 
+NEPOCHS = 10
+EPOCHSIZE = 128
+BATCHSIZE = 64
+NMAX = 512
+
+
+def splitkey(k):
+  return random.split(k)
 
 def arr(xs):
   return numpy.array(xs)
-
 
 def id(xs):
   return xs
@@ -29,7 +40,7 @@ def MLP(features, activations):
 
 perjet = MLP([32]*4, [relu]*3 + [softmax])
 perevt = MLP([32]*4, [relu]*3 + [softmax])
-inference = MLP([32]*4, [relu]*3 + [id])
+inference = MLP([32]*4 + [2], [relu]*4 + [id])
 
 
 params = \
@@ -39,6 +50,7 @@ params = \
   }
 
 
+@jax.jit
 def forward(params, inputs, evtmasks, jetmasks):
   batchsize = inputs.shape[0]
   nevt = inputs.shape[1]
@@ -120,14 +132,14 @@ def sample(k, lams, maxn):
   idxs = []
   nextk = k3
   for ib in range(b):
-    thisk , nextk = random.split(nextk)
+    thisk , nextk = splitkey(nextk)
     idxs.append(random.choice(thisk, tmpidxs, shape=(maxn,), p=ps[ib]))
 
   tmp = numpy.stack(idxs, axis=0) 
   return tmp , mask
 
 
-ttlams = 100 / len(datasets["top"][0]) * numpy.ones((len(datasets["top"][0]),))
+ttlams = 200 / len(datasets["top"][0]) * numpy.ones((len(datasets["top"][0]),))
 hhlams = 10 / len(datasets["HH"][0]) * numpy.ones((len(datasets["HH"][0]),))
 evts = numpy.concatenate([ datasets["top"][0] , datasets["HH"][0] ])
 masks = numpy.concatenate([ datasets["top"][1] , datasets["HH"][1] ])
@@ -144,8 +156,66 @@ def appmu(k, mus, maxn):
   return sample(k, lams, maxn)
 
 
-evtidxs , evtmasks = appmu(PRNGKey(0), arr([1, 2, 3]), 256)
+def prior(k, b):
+  return 10 * random.uniform(k, shape=(b,))
 
-batch , jetmasks = evts[evtidxs], masks[evtidxs]
 
-print(forward(params, batch, evtmasks, jetmasks))
+
+####################
+
+@jax.jit
+def loss(outputs, labels):
+  means = numpy.exp(outputs[:,0])
+  logsigmas = outputs[:,1]
+
+  chi = (means - labels) / numpy.exp(logsigmas)
+
+  return (0.5 * chi * chi + logsigmas).mean()
+
+@jax.jit
+def runloss(params, batch, evtmasks, jetmasks, labels):
+  fwd = forward(params, batch, evtmasks, jetmasks)
+  return loss(fwd, labels)
+
+
+@jax.jit
+def step(params, opt_state, batch, evtmasks, jetmasks, labels):
+  loss_value, grads = \
+    jax.value_and_grad(runloss)(params, batch, evtmasks, jetmasks, labels)
+
+  updates, opt_state = optimizer.update(grads, opt_state, params)
+  params = optax.apply_updates(params, updates)
+  return params, opt_state, loss_value
+
+
+optimizer = optax.adam(learning_rate=1e-4)
+opt_state = optimizer.init(params)
+
+knext = PRNGKey(10)
+
+for _ in range(NEPOCHS):
+  for _ in range(EPOCHSIZE):
+    k, knext = splitkey(knext)
+    labels = prior(k, BATCHSIZE)
+    k, knext = splitkey(knext)
+    evtidxs , evtmasks = appmu(k, labels, NMAX)
+    batch , jetmasks = evts[evtidxs] , masks[evtidxs]
+
+    params, opt_state, loss_value = \
+      step(params, opt_state, batch, evtmasks, jetmasks, labels)
+
+
+  outs = numpy.exp(forward(params, batch, evtmasks, jetmasks))
+
+  pull = (outs[:,0] - labels) / outs[:,1]
+  print("sample pulls")
+  print(pull[:5])
+  print()
+  print("mean pull")
+  print(pull.mean())
+  print()
+  print("std pull")
+  print(numpy.std(pull))
+  print()
+  print("end epoch")
+  print()
