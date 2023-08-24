@@ -87,7 +87,6 @@ def readarr(fname):
 
   arr = awkward.unflatten(arr, events)
 
-  # divide px, py, pz by 20 GeV
   arr = \
     awkward.fill_none \
     ( awkward.pad_none( arr , 8 , clip=True , axis=1 )
@@ -103,7 +102,6 @@ def readarr(fname):
 
   # divide momenta by 20 GeV
   arr[:,:,2:5] = arr[:,:,2:5] / 20
-
 
   return arr , mask
 
@@ -154,12 +152,17 @@ masks = numpy.concatenate([ datasets["top"][1] , datasets["HH"][1] ])
 def appmu(k, mus, maxn):
   b = mus.shape[0]
   tmptt = repeat(ttlams, "e -> b e", b=b)
+
+  k , knext = splitkey(k)
+  ttmus = numpy.exp(random.normal(k, shape=(b,)))
+  ttmus = repeat(ttmus, "b -> b e", e=ttlams.shape[0])
+
   tmphh = repeat(hhlams, "e -> b e", b=b)
   mus = repeat(mus, "b -> b e", e=hhlams.shape[0])
 
-  lams = numpy.concatenate([ tmptt , mus * tmphh ], axis=1)
+  lams = numpy.concatenate([ ttmus * tmptt , mus * tmphh ], axis=1)
 
-  return sample(k, lams, maxn)
+  return sample(knext, lams, maxn)
 
 
 def prior(k, b):
