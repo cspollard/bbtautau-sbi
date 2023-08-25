@@ -18,16 +18,18 @@ from tqdm import tqdm
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 700
+MAXEVTS = 1024
 
 NEPOCHS = 50
 NBATCHES = 128
 BATCHSIZE = 64
 LR = 1e-3
-NVALID = 500
 
-# how many datasets in the test
-NTEST = 1024
+# how many MC events should be allocated for the validation sample
+NVALIDMCSAMPS = 1024
+
+# how many datasets in the valid sample
+NVALIDBATCHES = 1024
 
 
 def splitkey(k):
@@ -118,10 +120,10 @@ def readarr(fname):
 datasets = { k : readarr(k + ".csv") for k in [ "top" , "HH" ] }
 
 validdata = \
-  { k : (v[0][:NVALID] , v[1][:NVALID]) for k , v in datasets.items() }
+  { k : (v[0][:NVALIDMCSAMPS] , v[1][:NVALIDMCSAMPS]) for k , v in datasets.items() }
 
 traindata = \
-  { k : (v[0][NVALID:] , v[1][NVALID:]) for k , v in datasets.items() }
+  { k : (v[0][NVALIDMCSAMPS:] , v[1][NVALIDMCSAMPS:]) for k , v in datasets.items() }
 
 
 # lams : (b, e)
@@ -162,7 +164,7 @@ def appparams(knext, pois, nps, maxn, dataset):
 
   evts = numpy.concatenate([ dataset["top"][0] , dataset["HH"][0] ])
   masks = numpy.concatenate([ dataset["top"][1] , dataset["HH"][1] ])
-  ttlams = 500 / len(dataset["top"][0]) * numpy.ones((len(dataset["top"][0]),))
+  ttlams = 800 / len(dataset["top"][0]) * numpy.ones((len(dataset["top"][0]),))
   hhlams = 1 / len(dataset["HH"][0]) * numpy.ones((len(dataset["HH"][0]),))
 
   b = pois.shape[0]
@@ -190,7 +192,7 @@ def buildbatch(k, pois, nps, dataset):
 
 def prior(knext, b):
   k , knext = splitkey(knext)
-  pois = 50 * random.uniform(k, shape=(b,))
+  pois = 100 * random.uniform(k, shape=(b,))
   nps = relu(1 + 0.1 * random.normal(k, shape=(b,)))
   return pois , nps
 
@@ -223,6 +225,7 @@ def step(params, opt_state, batch, evtmasks, jetmasks, pois):
 
   updates, opt_state = optimizer.update(grads, opt_state, params)
   params = optax.apply_updates(params, updates)
+
   return params, opt_state, loss_value
 
 
@@ -233,7 +236,7 @@ opt_state = optimizer.init(params)
 knext = PRNGKey(10)
 
 k , knext = splitkey(knext)
-testpois , testnps = prior(k, NTEST)
+testpois , testnps = prior(k, NVALIDBATCHES)
 
 k , knext = splitkey(knext)
 testbatch , testevtmasks , testjetmasks = \
@@ -252,20 +255,24 @@ for epoch in range(NEPOCHS):
 
   outs = numpy.exp(forward(params, testbatch, testevtmasks, testjetmasks))
 
+
+  k, knext = splitkey(knext)
+  idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
+
   diff = outs[:,0] - testpois
   pull = diff / outs[:,1]
   print("nevt, pois, and sample outputs")
-  print(reduce(testevtmasks[:5], "b e -> b", "sum"))
-  print(testnps[:5])
-  print(testpois[:5])
-  print(outs[:5,0])
-  print(outs[:5,1])
+  print(reduce(testevtmasks[idxs], "b e -> b", "sum"))
+  print(testnps[idxs])
+  print(testpois[idxs])
+  print(outs[idxs,0])
+  print(outs[idxs,1])
   print()
   print("sample diffs")
-  print(diff[:5])
+  print(diff[idxs])
   print()
   print("sample pulls")
-  print(pull[:5])
+  print(pull[idxs])
   print()
   print("mean pull")
   print(pull.mean())
@@ -279,7 +286,7 @@ for epoch in range(NEPOCHS):
 print()
 print("end of training")
 print()
-print("nevt, pois, and sample outputs")
+print("nevt, nps, pois, and outputs + uncertainties")
 print(reduce(testevtmasks, "b e -> b", "sum"))
 print(testnps)
 print(testpois)
