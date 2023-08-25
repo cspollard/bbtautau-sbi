@@ -12,12 +12,14 @@ from numpy import genfromtxt
 
 from einops import repeat, rearrange, reduce
 
+from tqdm import tqdm
 
-NEPOCHS = 200
+
+NEPOCHS = 50
 NBATCHES = 128
 BATCHSIZE = 64
 NMAX = 512
-LR = 3e-4
+LR = 3e-3
 NTEST = 1024
 
 
@@ -149,24 +151,33 @@ evts = numpy.concatenate([ datasets["top"][0] , datasets["HH"][0] ])
 masks = numpy.concatenate([ datasets["top"][1] , datasets["HH"][1] ])
 
 
-def appmu(k, mus, maxn):
-  b = mus.shape[0]
+def appparams(knext, pois, nps, maxn):
+  b = pois.shape[0]
   tmptt = repeat(ttlams, "e -> b e", b=b)
 
-  k , knext = splitkey(k)
-  ttmus = numpy.exp(random.normal(k, shape=(b,)))
+  ttmus = numpy.exp(nps)
   ttmus = repeat(ttmus, "b -> b e", e=ttlams.shape[0])
 
   tmphh = repeat(hhlams, "e -> b e", b=b)
-  mus = repeat(mus, "b -> b e", e=hhlams.shape[0])
+  mus = repeat(pois, "b -> b e", e=hhlams.shape[0])
 
   lams = numpy.concatenate([ ttmus * tmptt , mus * tmphh ], axis=1)
 
   return sample(knext, lams, maxn)
 
+# @jax.jit
+def buildbatch(k, pois, nps):
+  evtidxs , evtmasks = appparams(k, pois, nps, NMAX)
+  batch , jetmasks = evts[evtidxs] , masks[evtidxs]
+  return batch , evtmasks , jetmasks
 
-def prior(k, b):
-  return 100 * random.uniform(k, shape=(b,))
+
+def prior(knext, b):
+  k , knext = splitkey(knext)
+  pois = 100 * random.uniform(k, shape=(b,))
+  nps = random.normal(k, shape=(b,))
+  return pois , nps
+
 
 def testprior(k, b):
   return 25 + 50 * random.uniform(k, shape=(b,))
@@ -201,26 +212,24 @@ def step(params, opt_state, batch, evtmasks, jetmasks, labels):
 
 
 sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
-
 optimizer = optax.adam(learning_rate=sched)
-
 opt_state = optimizer.init(params)
 
 knext = PRNGKey(10)
 
 k , knext = splitkey(knext)
-testlabels = prior(k, NTEST)
+testlabels , testnps = prior(k, NTEST)
+
 k , knext = splitkey(knext)
-testidxs , testevtmasks = appmu(k, testlabels, NMAX)
+testidxs , testevtmasks = appparams(k, testlabels, testnps, NMAX)
 testbatch , testjetmasks = evts[testidxs] , masks[testidxs]
 
 for epoch in range(NEPOCHS):
-  for _ in range(NBATCHES):
+  for _ in tqdm(range(NBATCHES)):
     k, knext = splitkey(knext)
-    labels = prior(k, BATCHSIZE)
+    labels , nps = prior(k, BATCHSIZE)
     k, knext = splitkey(knext)
-    evtidxs , evtmasks = appmu(k, labels, NMAX)
-    batch , jetmasks = evts[evtidxs] , masks[evtidxs]
+    batch , evtmasks , jetmasks = buildbatch(k, labels, nps)
 
     params, opt_state, loss_value = \
       step(params, opt_state, batch, evtmasks, jetmasks, labels)

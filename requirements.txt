@@ -3,3 +3,4 @@ optax
 einops
 awkward
 six
+tqdm
