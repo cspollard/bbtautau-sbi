@@ -15,11 +15,18 @@ from einops import repeat, rearrange, reduce
 from tqdm import tqdm
 
 
+# how many jets / evt
+MAXJETS = 8
+# how many evts / dataset
+MAXEVTS = 700
+
 NEPOCHS = 50
-NBATCHES = 128
+NBATCHES = 1
 BATCHSIZE = 64
-NMAX = 512
 LR = 1e-3
+NVALID = 500
+
+# how many datasets in the test
 NTEST = 1024
 
 
@@ -91,7 +98,7 @@ def readarr(fname):
 
   arr = \
     awkward.fill_none \
-    ( awkward.pad_none( arr , 8 , clip=True , axis=1 )
+    ( awkward.pad_none( arr , MAXJETS , clip=True , axis=1 )
     , [999]*6
     , axis=1
     )
@@ -110,6 +117,12 @@ def readarr(fname):
 
 datasets = { k : readarr(k + ".csv") for k in [ "top" , "HH" ] }
 
+validdata = \
+  { k : (v[0][:NVALID] , v[1][:NVALID]) for k , v in datasets.items() }
+
+traindata = \
+  { k : (v[0][NVALID:] , v[1][NVALID:]) for k , v in datasets.items() }
+
 
 # lams : (b, e)
 def sample(k, lams, maxn):
@@ -119,11 +132,11 @@ def sample(k, lams, maxn):
 
   # lamtot : (b,)
   lamtot = reduce(lams, "b w -> b", "sum")
-
-  bernoulliprobs = repeat(lamtot / maxn, "b -> b m", m=maxn)
+  ns = repeat(random.poisson(k2, lamtot), "b -> b e", e=maxn)
+  idxs = repeat(numpy.arange(maxn), "e -> b e", b=b)
 
   # mask : (b, maxn)
-  mask = random.bernoulli(k2, bernoulliprobs)
+  mask = idxs < ns
 
   # ps : (b, e)
   ps = lams / repeat(lamtot, "b -> b e", e=e)
@@ -145,37 +158,40 @@ def sample(k, lams, maxn):
   return tmp , mask
 
 
-ttlams = 100 / len(datasets["top"][0]) * numpy.ones((len(datasets["top"][0]),))
-hhlams = 1 / len(datasets["HH"][0]) * numpy.ones((len(datasets["HH"][0]),))
-evts = numpy.concatenate([ datasets["top"][0] , datasets["HH"][0] ])
-masks = numpy.concatenate([ datasets["top"][1] , datasets["HH"][1] ])
+def appparams(knext, pois, nps, maxn, dataset):
 
+  evts = numpy.concatenate([ dataset["top"][0] , dataset["HH"][0] ])
+  masks = numpy.concatenate([ dataset["top"][1] , dataset["HH"][1] ])
+  ttlams = 500 / len(dataset["top"][0]) * numpy.ones((len(dataset["top"][0]),))
+  hhlams = 1 / len(dataset["HH"][0]) * numpy.ones((len(dataset["HH"][0]),))
 
-def appparams(knext, pois, nps, maxn):
   b = pois.shape[0]
   tmptt = repeat(ttlams, "e -> b e", b=b)
 
-  ttmus = numpy.exp(nps)
-  ttmus = repeat(ttmus, "b -> b e", e=ttlams.shape[0])
+  # currently:
+  # np[:,0] is the top norm uncertainty
+  # no other uncerts.
+  ttmus = repeat(nps, "b -> b e", e=ttlams.shape[0])
 
   tmphh = repeat(hhlams, "e -> b e", b=b)
   mus = repeat(pois, "b -> b e", e=hhlams.shape[0])
 
   lams = numpy.concatenate([ ttmus * tmptt , mus * tmphh ], axis=1)
 
-  return sample(knext, lams, maxn)
+  idxs , evtmasks = sample(knext, lams, maxn)
+  batch , jetmasks = evts[idxs] , masks[idxs]
+  return batch , evtmasks, jetmasks
 
 # @jax.jit
-def buildbatch(k, pois, nps):
-  evtidxs , evtmasks = appparams(k, pois, nps, NMAX)
-  batch , jetmasks = evts[evtidxs] , masks[evtidxs]
+def buildbatch(k, pois, nps, dataset):
+  evtidxs , evtmasks = appparams(k, pois, nps, MAXEVTS, dataset)
   return batch , evtmasks , jetmasks
 
 
 def prior(knext, b):
   k , knext = splitkey(knext)
-  pois = 100 * random.uniform(k, shape=(b,))
-  nps = random.normal(k, shape=(b,))
+  pois = 50 * random.uniform(k, shape=(b,))
+  nps = relu(1 + 0.1 * random.normal(k, shape=(b,)))
   return pois , nps
 
 
@@ -220,15 +236,15 @@ k , knext = splitkey(knext)
 testpois , testnps = prior(k, NTEST)
 
 k , knext = splitkey(knext)
-testidxs , testevtmasks = appparams(k, testpois, testnps, NMAX)
-testbatch , testjetmasks = evts[testidxs] , masks[testidxs]
+testbatch , testevtmasks , testjetmasks = \
+  appparams(k, testpois, testnps, MAXEVTS, validdata)
 
 for epoch in range(NEPOCHS):
   for _ in tqdm(range(NBATCHES)):
     k, knext = splitkey(knext)
     pois , nps = prior(k, BATCHSIZE)
     k, knext = splitkey(knext)
-    batch , evtmasks , jetmasks = buildbatch(k, pois, nps)
+    batch , evtmasks , jetmasks = appparams(k, pois, nps, MAXEVTS, traindata)
 
     params, opt_state, loss_value = \
       step(params, opt_state, batch, evtmasks, jetmasks, pois)
@@ -238,7 +254,8 @@ for epoch in range(NEPOCHS):
 
   diff = outs[:,0] - testpois
   pull = diff / outs[:,1]
-  print("nps, pois, and sample outputs")
+  print("nevt, pois, and sample outputs")
+  print(reduce(testevtmasks[:5], "b e -> b", "sum"))
   print(testnps[:5])
   print(testpois[:5])
   print(outs[:5,0])
@@ -258,3 +275,20 @@ for epoch in range(NEPOCHS):
   print()
   print("end epoch %02d" % epoch)
   print()
+
+print()
+print("end of training")
+print()
+print("nevt, pois, and sample outputs")
+print(reduce(testevtmasks, "b e -> b", "sum"))
+print(testnps)
+print(testpois)
+print(outs[:,0])
+print(outs[:,1])
+print()
+print("sample diffs")
+print(diff)
+print()
+print("sample pulls")
+print(pull)
+print()
