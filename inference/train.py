@@ -19,7 +19,7 @@ NEPOCHS = 50
 NBATCHES = 128
 BATCHSIZE = 64
 NMAX = 512
-LR = 3e-3
+LR = 1e-3
 NTEST = 1024
 
 
@@ -183,28 +183,27 @@ def testprior(k, b):
   return 25 + 50 * random.uniform(k, shape=(b,))
 
 
-
 ####################
 
 @jax.jit
-def loss(outputs, labels):
+def loss(outputs, pois):
   means = numpy.exp(outputs[:,0])
   logsigmas = outputs[:,1]
 
-  chi = (means - labels) / numpy.exp(logsigmas)
+  chi = (means - pois) / numpy.exp(logsigmas)
 
   return (0.5 * chi * chi + logsigmas).mean()
 
 @jax.jit
-def runloss(params, batch, evtmasks, jetmasks, labels):
+def runloss(params, batch, evtmasks, jetmasks, pois):
   fwd = forward(params, batch, evtmasks, jetmasks)
-  return loss(fwd, labels)
+  return loss(fwd, pois)
 
 
 @jax.jit
-def step(params, opt_state, batch, evtmasks, jetmasks, labels):
+def step(params, opt_state, batch, evtmasks, jetmasks, pois):
   loss_value, grads = \
-    jax.value_and_grad(runloss)(params, batch, evtmasks, jetmasks, labels)
+    jax.value_and_grad(runloss)(params, batch, evtmasks, jetmasks, pois)
 
   updates, opt_state = optimizer.update(grads, opt_state, params)
   params = optax.apply_updates(params, updates)
@@ -218,29 +217,30 @@ opt_state = optimizer.init(params)
 knext = PRNGKey(10)
 
 k , knext = splitkey(knext)
-testlabels , testnps = prior(k, NTEST)
+testpois , testnps = prior(k, NTEST)
 
 k , knext = splitkey(knext)
-testidxs , testevtmasks = appparams(k, testlabels, testnps, NMAX)
+testidxs , testevtmasks = appparams(k, testpois, testnps, NMAX)
 testbatch , testjetmasks = evts[testidxs] , masks[testidxs]
 
 for epoch in range(NEPOCHS):
   for _ in tqdm(range(NBATCHES)):
     k, knext = splitkey(knext)
-    labels , nps = prior(k, BATCHSIZE)
+    pois , nps = prior(k, BATCHSIZE)
     k, knext = splitkey(knext)
-    batch , evtmasks , jetmasks = buildbatch(k, labels, nps)
+    batch , evtmasks , jetmasks = buildbatch(k, pois, nps)
 
     params, opt_state, loss_value = \
-      step(params, opt_state, batch, evtmasks, jetmasks, labels)
+      step(params, opt_state, batch, evtmasks, jetmasks, pois)
 
 
   outs = numpy.exp(forward(params, testbatch, testevtmasks, testjetmasks))
 
-  diff = outs[:,0] - testlabels
+  diff = outs[:,0] - testpois
   pull = diff / outs[:,1]
-  print("labels and sample outputs")
-  print(testlabels[:5])
+  print("nps, pois, and sample outputs")
+  print(testnps[:5])
+  print(testpois[:5])
   print(outs[:5,0])
   print(outs[:5,1])
   print()
