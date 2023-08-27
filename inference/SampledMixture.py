@@ -14,17 +14,17 @@ split = random.split
 # see https://hackage.haskell.org/package/mwc-probability-2.3.1/docs/System-Random-MWC-Probability.html#t:Prob
 
 # TODO
-# where is really out of place... could make it more "local" in concat.
+# reindex is really out of place... could make it more "local" in concat.
 
 # samples : a function from indices to Any
-# where : a way to conditionally join the outcomes of samples
+# reindex : a way to conditionally join the outcomes of samples
 # weights : a corresponding array of weights that are used for sampling
 Indexed = Callable[[jax.Array], Any]
 class SampledMixture:
   def __init__ \
     ( self
     , samples : Indexed
-    , where : Callable[[jax.Array, Indexed, Indexed], Indexed]
+    , reindex : Callable[[Indexed, Indexed, int], Indexed]
     , weights : jax.Array
     ) :
 
@@ -33,7 +33,7 @@ class SampledMixture:
 
     self.samples = samples
     self.weights = weights
-    self.where = where
+    self.reindex = reindex
 
     return
 
@@ -75,7 +75,7 @@ def reweight \
   return \
     SampledMixture \
     ( mix.samples
-    , mix.where
+    , mix.reindex
     , f(mix.samples(idxs)) * mix.weights
     )
 
@@ -88,29 +88,10 @@ def alter \
   return \
     SampledMixture \
     ( lambda idxs: f(mix.samples(idxs))
-    , mix.where
+    , mix.reindex
     , mix.weights
     )
 
-
-def join \
-  ( l : Indexed
-  , r : Indexed
-  , where : Callable[[jax.Array, Indexed, Indexed], Indexed]
-  , lenl : int
-  ) -> Callable[[jax.Array], Any] :
-
-  def f(idxs : jax.Array) -> Any:
-    test = idxs < lenl
-    # TODO
-    # lots of unnecessary zero accesses...
-    # won't work with zero-len arrays.
-    lidxs = numpy.where(test, idxs, 0)
-    ridxs = numpy.where(test, 0, idxs - lenl)
-
-    return where(test, l, r)(idxs)
-
-  return f
 
 
 def concat2 \
@@ -118,11 +99,12 @@ def concat2 \
   , m2 : SampledMixture
   ) -> SampledMixture :
 
-  samps = join(m1.samples, m2.samples, m1.where, m1.count)
+  samps = m1.reindex(m1.samples, m2.samples, m1.count)
+
   return \
     SampledMixture \
     ( samps
-    , m1.where
+    , m1.reindex
     , numpy.concatenate([m1.weights, m2.weights])
     )
 
@@ -163,14 +145,17 @@ def indexlist \
   return f
 
 
-def wherelist \
-  ( cond : jax.Array
-  , l : indexedlist
+def reindexlist \
+  ( l : indexedlist
   , r : indexedlist
+  , lenl : int
   ) -> indexedlist :
 
   def f(idxs):
-    return [ numpy.where(cond, x, y) for (x, y) in zip(l(idxs), r(idxs)) ]
+    cond = idxs < lenl
+    idxsl = numpy.where(cond, idxs, 0)
+    idxsr = numpy.where(cond, 0, idxs - lenl)
+    return [ numpy.where(cond, x, y) for (x, y) in zip(l(idxsl), r(idxsr)) ]
 
   return f
 
@@ -183,15 +168,19 @@ def indexdict(xs) -> indexedlist :
   return f
 
 
-def wheredict \
-  ( cond : jax.Array
-  , l
+def reindexdict \
+  ( l
   , r
+  , lenl
   ) :
 
   def f(idxs):
-    ld = l(idxs)
-    rd = r(idxs)
+    cond = idxs < lenl
+    idxsl = numpy.where(cond, idxs, 0)
+    idxsr = numpy.where(cond, 0, idxs - lenl)
+
+    ld = l(idxsl)
+    rd = r(idxsr)
 
     # would prefer this, but it's probably slow.
     # assert ld.keys() == rd.keys()
@@ -206,7 +195,7 @@ if __name__ == '__main__':
   test = \
     SampledMixture \
     ( indexdict({ "hi" : numpy.arange(10) , "bye" : numpy.arange(10) })
-    , wheredict
+    , reindexdict
     , numpy.ones(10)
     )
 
@@ -227,3 +216,6 @@ if __name__ == '__main__':
 
   out, mask = test.sample(key(2), 50)
   print(mask.sum(), out)
+
+  print(len(out["hi"]))
+  print(len(out["bye"]))
