@@ -42,6 +42,15 @@ class SampledMixture:
     return self.samples(self.idxs)
 
 
+  def __getitem__(self, idxs):
+    return \
+      SampledMixture \
+      ( lambda jdxs: self.samples(idxs[jdxs])
+      , self.reindex
+      , self.weights[idxs]
+      )
+
+
   def sample(self, knext, maxn):
     lam = self.weights.sum()
 
@@ -49,9 +58,26 @@ class SampledMixture:
     idxs = random.choice(k, self.count, p=self.weights / lam, shape=(maxn,))
 
     n = random.poisson(knext, lam)
+    # probably too slow?
+    # assert n <= maxn
     mask = numpy.arange(maxn) < n
 
     return self.samples(idxs), mask
+
+
+def randompartition \
+  ( k : random.KeyArray
+  , mix : SampledMixture
+  , frac : float
+  ) -> SampledMixture :
+
+  cutoff = int(frac * mix.count)
+  perm = random.permutation(k, mix.count)
+
+  return \
+    ( mix[perm[:cutoff]]
+    , mix[perm[cutoff:]]
+    )
 
 
 def bootstrap \
@@ -185,17 +211,26 @@ def reindexdict \
     # would prefer this, but it's probably slow.
     # assert ld.keys() == rd.keys()
 
+    # really annoying I need to broadcast here via transposition?
     return \
-      { k : numpy.where(cond, ld[k], rd[k]) for k in ld }
+      { k : numpy.where(cond, ld[k].T, rd[k].T).T
+        for k in ld
+      }
 
   return f
 
 
+def mixturedict \
+  ( samplesdict
+  , weights
+  ) :
+  return SampledMixture(indexdict(samplesdict), reindexdict, weights)
+
+
 if __name__ == '__main__':
   test = \
-    SampledMixture \
-    ( indexdict({ "hi" : numpy.arange(10) , "bye" : numpy.arange(10) })
-    , reindexdict
+    mixturedict \
+    ( { "hi" : numpy.arange(10) , "bye" : numpy.arange(10) }
     , numpy.ones(10)
     )
 

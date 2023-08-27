@@ -1,4 +1,4 @@
-from jax.random import PRNGKey
+from jax.random import PRNGKey as key
 import jax.numpy as numpy
 import jax.random as random
 import jax
@@ -14,11 +14,13 @@ from einops import repeat, rearrange, reduce
 
 from tqdm import tqdm
 
+from SampledMixture \
+  import mixturedict, randompartition, reweight, concat2
 
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 1024
+MAXEVTS = 256
 
 NEPOCHS = 50
 NBATCHES = 128
@@ -26,17 +28,18 @@ BATCHSIZE = 64
 LR = 1e-3
 
 # how many MC events should be allocated for the validation sample
-NVALIDMCSAMPS = 1024
+VALIDFRAC = 0.3
 
 # how many datasets in the valid sample
 NVALIDBATCHES = 1024
 
 
-def splitkey(k):
-  return random.split(k)
+xsecs = { "top" : 100 , "HH" : 10 }
 
-def arr(xs):
-  return numpy.array(xs)
+
+split = random.split
+arr = numpy.array
+stack = numpy.stack
 
 def id(xs):
   return xs
@@ -57,9 +60,9 @@ inference = MLP([64]*6 + [2] , [relu]*6 + [id])
 
 
 params = \
-  { "perjet" : perjet.init(PRNGKey(0), numpy.ones((1, 5)))
-  , "perevt" : perevt.init(PRNGKey(0), numpy.ones((1, 64)))
-  , "inference" : inference.init(PRNGKey(1), numpy.ones((1, 64)))
+  { "perjet" : perjet.init(key(0), numpy.ones((1, 5)))
+  , "perevt" : perevt.init(key(0), numpy.ones((1, 64)))
+  , "inference" : inference.init(key(1), numpy.ones((1, 64)))
   }
 
 
@@ -91,7 +94,7 @@ def forward(params, inputs, evtmasks, jetmasks):
   return inference.apply(params["inference"], summed)
 
 
-def readarr(fname):
+def readarr(xsectimeslumi, fname):
   arr = genfromtxt(fname, delimiter=",", skip_header=1)
   
   events = awkward.run_lengths(arr[:,0])
@@ -109,96 +112,71 @@ def readarr(fname):
   # need to smear b-tagging and tau id
   arr = awkward.to_regular(arr).to_numpy().astype(numpy.float32)[:,:,1:]
 
-  mask = numpy.any(arr == 999, axis=2)
+  mask = numpy.any(arr != 999, axis=2)
 
   # divide momenta by 20 GeV
   arr[:,:,2:5] = arr[:,:,2:5] / 20
 
-  return arr , mask
+  l = len(mask)
+  weights = xsectimeslumi / l * numpy.ones((l,))
+
+  return mixturedict({ "events" : arr, "jetmasks" : mask }, weights)
 
 
-datasets = { k : readarr(k + ".csv") for k in [ "top" , "HH" ] }
+allsamples = \
+  { k : readarr(xsecs[k] , k + ".csv")
+    for k in [ "top" , "HH" ]
+  }
 
-validdata = \
-  { k : (v[0][:NVALIDMCSAMPS] , v[1][:NVALIDMCSAMPS]) for k , v in datasets.items() }
+validsamps = allsamples
+trainsamps = allsamples
 
-traindata = \
-  { k : (v[0][NVALIDMCSAMPS:] , v[1][NVALIDMCSAMPS:]) for k , v in datasets.items() }
+# allsamples = \
+#   { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
+#     for k in [ "top" , "HH" ]
+#   }
 
+# validsamps = { k : m[0] for k , m in allsamples.items() }
+# trainsamps = { k : m[1] for k , m in allsamples.items() }
 
-# lams : (b, e)
-def sample(k, lams, maxn):
-  b , e = lams.shape
-
-  k1 , k2 , k3 = random.split(k, 3)
-
-  # lamtot : (b,)
-  lamtot = reduce(lams, "b w -> b", "sum")
-  ns = repeat(random.poisson(k2, lamtot), "b -> b e", e=maxn)
-  idxs = repeat(numpy.arange(maxn), "e -> b e", b=b)
-
-  # mask : (b, maxn)
-  mask = idxs < ns
-
-  # ps : (b, e)
-  ps = lams / repeat(lamtot, "b -> b e", e=e)
-
-  # tmpidxs : (b, e)
-  tmpidxs = numpy.arange(e)
-
-  # TODO
-  # this is probably very slow.
-
-  # idxs : (b , maxn)
-  idxs = []
-  nextk = k3
-  for ib in range(b):
-    thisk , nextk = splitkey(nextk)
-    idxs.append(random.choice(thisk, tmpidxs, shape=(maxn,), p=ps[ib]))
-
-  tmp = numpy.stack(idxs, axis=0) 
-  return tmp , mask
+print("done reading in samples")
 
 
-def generate(knext, pois, nps, maxn, dataset):
+# pois: HH mu
+# nps: tt mu
+def generate(knext, pois, nps, samps):
+  HH = reweight(lambda x: pois, samps["HH"])
+  top = reweight(lambda x: nps, samps["top"])
 
-  evts = numpy.concatenate([ dataset["top"][0] , dataset["HH"][0] ])
-  masks = numpy.concatenate([ dataset["top"][1] , dataset["HH"][1] ])
-  ttlams = 800 / len(dataset["top"][0]) * numpy.ones((len(dataset["top"][0]),))
-  hhlams = 1 / len(dataset["HH"][0]) * numpy.ones((len(dataset["HH"][0]),))
+  return concat2(HH, top).sample(knext, MAXEVTS)
 
-  b = pois.shape[0]
-  tmptt = repeat(ttlams, "e -> b e", b=b)
 
-  # currently:
-  # np[:,0] is the top norm uncertainty
-  # no other uncerts.
-  ttmus = repeat(nps, "b -> b e", e=ttlams.shape[0])
-
-  tmphh = repeat(hhlams, "e -> b e", b=b)
-  mus = repeat(pois, "b -> b e", e=hhlams.shape[0])
-
-  lams = numpy.concatenate([ ttmus * tmptt , mus * tmphh ], axis=1)
-
-  idxs , evtmasks = sample(knext, lams, maxn)
-  batch , jetmasks = evts[idxs] , masks[idxs]
-  return batch , evtmasks, jetmasks
-
+# TODO
+# I bet this is the slow bit...
+# can't jit this at the moment...
 # @jax.jit
-def buildbatch(k, pois, nps, dataset):
-  evtidxs , evtmasks = appparams(k, pois, nps, MAXEVTS, dataset)
-  return batch , evtmasks , jetmasks
+def buildbatch(knext, pois, nps, samps):
+  nbatch = pois.shape[0]
+
+  batches = []
+  jetmasks = []
+  evtmasks = []
+  for i in range(nbatch):
+    k , knext = split(knext)
+    batch , masks = generate(k, pois[i], nps[i], samps)
+    batches.append(batch["events"])
+    jetmasks.append(batch["jetmasks"])
+    evtmasks.append(masks)
+
+  return \
+    stack(batches) , stack(evtmasks) , stack(jetmasks)
 
 
 def prior(knext, b):
-  k , knext = splitkey(knext)
-  pois = 100 * random.uniform(k, shape=(b,))
+  k , knext = split(knext)
+  pois = random.uniform(k, shape=(b,))
   nps = relu(1 + 0.1 * random.normal(k, shape=(b,)))
   return pois , nps
-
-
-def testprior(k, b):
-  return 25 + 50 * random.uniform(k, shape=(b,))
 
 
 ####################
@@ -211,6 +189,7 @@ def loss(outputs, pois):
   chi = (means - pois) / numpy.exp(logsigmas)
 
   return (0.5 * chi * chi + logsigmas).mean()
+
 
 @jax.jit
 def runloss(params, batch, evtmasks, jetmasks, pois):
@@ -233,38 +212,38 @@ sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
 optimizer = optax.adam(learning_rate=sched)
 opt_state = optimizer.init(params)
 
-knext = PRNGKey(10)
+knext = key(10)
 
-k , knext = splitkey(knext)
-testpois , testnps = prior(k, NVALIDBATCHES)
+k , knext = split(knext)
+validpois , validnps = prior(k, NVALIDBATCHES)
 
-k , knext = splitkey(knext)
-testbatch , testevtmasks , testjetmasks = \
-  appparams(k, testpois, testnps, MAXEVTS, validdata)
+k , knext = split(knext)
+validbatch , validevtmasks , validjetmasks = \
+  buildbatch(k, validpois, validnps, validsamps)
+
 
 for epoch in range(NEPOCHS):
   for _ in tqdm(range(NBATCHES)):
-    k, knext = splitkey(knext)
+    k, knext = split(knext)
     pois , nps = prior(k, BATCHSIZE)
-    k, knext = splitkey(knext)
-    batch , evtmasks , jetmasks = appparams(k, pois, nps, MAXEVTS, traindata)
+    k, knext = split(knext)
+    batch , evtmasks , jetmasks = buildbatch(k, pois, nps, trainsamps)
 
     params, opt_state, loss_value = \
       step(params, opt_state, batch, evtmasks, jetmasks, pois)
 
 
-  outs = numpy.exp(forward(params, testbatch, testevtmasks, testjetmasks))
+  outs = numpy.exp(forward(params, validbatch, validevtmasks, validjetmasks))
 
-
-  k, knext = splitkey(knext)
+  k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
 
-  diff = outs[:,0] - testpois
+  diff = outs[:,0] - validpois
   pull = diff / outs[:,1]
-  print("nevt, pois, and sample outputs")
-  print(reduce(testevtmasks[idxs], "b e -> b", "sum"))
-  print(testnps[idxs])
-  print(testpois[idxs])
+  print("nevt, nps, pois, posterior mu, posterior sigma")
+  print(reduce(validevtmasks[idxs], "b e -> b", "sum"))
+  print(validnps[idxs])
+  print(validpois[idxs])
   print(outs[idxs,0])
   print(outs[idxs,1])
   print()
@@ -287,9 +266,9 @@ print()
 print("end of training")
 print()
 print("nevt, nps, pois, and outputs + uncertainties")
-print(reduce(testevtmasks, "b e -> b", "sum"))
-print(testnps)
-print(testpois)
+print(reduce(validevtmasks, "b e -> b", "sum"))
+print(validnps)
+print(validpois)
 print(outs[:,0])
 print(outs[:,1])
 print()
