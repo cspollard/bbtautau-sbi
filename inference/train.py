@@ -37,7 +37,7 @@ VALIDFRAC = 0.3
 NVALIDBATCHES = 2048
 
 
-xsecs = { "top" : 100 , "HH" : 10 }
+xsectimeslumis = { "top" : 100 , "HH" : 10 }
 
 
 split = random.split
@@ -132,7 +132,14 @@ def readarr(xsectimeslumi, fname):
 
 
 allsamples = \
-  { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC, True)
+  { k : \
+      randompartition \
+      ( key(0)
+      , readarr(xsectimeslumis[k], k + ".csv")
+      , VALIDFRAC
+      , True
+      )
+
     for k in [ "top" , "HH" ]
   }
 
