@@ -119,7 +119,6 @@ def alter \
     )
 
 
-
 def concat2 \
   ( m1 : SampledMixture
   , m2 : SampledMixture

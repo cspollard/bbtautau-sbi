@@ -20,11 +20,11 @@ from SampledMixture \
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 150
+MAXEVTS = 200
 
 NEPOCHS = 50
-NBATCHES = 128
-BATCHSIZE = 64
+NBATCHES = 512
+BATCHSIZE = 32
 LR = 1e-3
 
 # how many MC events should be allocated for the validation sample
@@ -38,7 +38,7 @@ xsecs = { "top" : 100 , "HH" : 10 }
 
 
 split = random.split
-arr = numpy.array
+array = numpy.array
 stack = numpy.stack
 
 def id(xs):
@@ -120,16 +120,26 @@ def readarr(xsectimeslumi, fname):
   l = len(mask)
   weights = xsectimeslumi / l * numpy.ones((l,))
 
-  return mixturedict({ "events" : arr, "jetmasks" : mask }, weights)
+  return \
+    mixturedict \
+    ( { "events" : array(arr), "jetmasks" : array(mask) }
+    , array(weights)
+    )
 
+
+# allsamples = \
+#   { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
+#     for k in [ "top" , "HH" ]
+#   }
+
+# validsamps = { k : m[0] for k , m in allsamples.items() }
+# trainsamps = { k : m[1] for k , m in allsamples.items() }
 
 allsamples = \
-  { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
+  { k : readarr(xsecs[k] , k + ".csv")
     for k in [ "top" , "HH" ]
   }
 
-validsamps = { k : m[0] for k , m in allsamples.items() }
-trainsamps = { k : m[1] for k , m in allsamples.items() }
 
 print("done reading in samples")
 
@@ -144,10 +154,14 @@ def generate(knext, pois, nps, samps):
 
 
 # TODO
-# I bet this is the slow bit...
-# can't jit due to non-Array inputs
-# @jax.jit
-def buildbatch(knext, pois, nps, samps):
+# this strategy results in an extremely slow startup because of the for-loop in
+# buildbatch.
+@jax.jit
+def buildbatch_train(knext, pois, nps):
+  return buildbatch(knext, pois, nps)
+
+
+def buildbatch(knext, pois, nps):
   nbatch = pois.shape[0]
 
   batches = []
@@ -155,18 +169,18 @@ def buildbatch(knext, pois, nps, samps):
   evtmasks = []
   for i in range(nbatch):
     k , knext = split(knext)
-    batch , masks = generate(k, pois[i], nps[i], samps)
+    batch , masks = generate(k, pois[i], nps[i], allsamples)
     batches.append(batch["events"])
     jetmasks.append(batch["jetmasks"])
     evtmasks.append(masks)
 
-  return \
-    stack(batches) , stack(evtmasks) , stack(jetmasks)
+  return stack(batches) , stack(evtmasks) , stack(jetmasks)
+
 
 
 def prior(knext, b):
   k , knext = split(knext)
-  pois = random.uniform(k, shape=(b,))
+  pois = 5 * random.uniform(k, shape=(b,))
   nps = relu(1 + 0.1 * random.normal(k, shape=(b,)))
   return pois , nps
 
@@ -211,15 +225,22 @@ validpois , validnps = prior(k, NVALIDBATCHES)
 
 k , knext = split(knext)
 validbatch , validevtmasks , validjetmasks = \
-  buildbatch(k, validpois, validnps, validsamps)
+  buildbatch(k, validpois, validnps)
 
 
 for epoch in range(NEPOCHS):
+  print("start epoch %02d" % epoch)
+
+  if epoch == 0:
+    print("JIT may take some time during the first batch...")
+
+  print()
+
   for _ in tqdm(range(NBATCHES)):
     k, knext = split(knext)
     pois , nps = prior(k, BATCHSIZE)
     k, knext = split(knext)
-    batch , evtmasks , jetmasks = buildbatch(k, pois, nps, trainsamps)
+    batch , evtmasks , jetmasks = buildbatch_train(k, pois, nps)
 
     params, opt_state, loss_value = \
       step(params, opt_state, batch, evtmasks, jetmasks, pois)
