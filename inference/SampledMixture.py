@@ -69,15 +69,20 @@ def randompartition \
   ( k : random.KeyArray
   , mix : SampledMixture
   , frac : float
+  , compensate : bool
   ) -> SampledMixture :
 
   cutoff = int(frac * mix.count)
   perm = random.permutation(k, mix.count)
 
-  return \
-    ( mix[perm[:cutoff]]
-    , mix[perm[cutoff:]]
-    )
+  xl = mix[perm[:cutoff]]
+  xr = mix[perm[cutoff:]]
+
+  if compensate:
+    xl = reweight(lambda x : 1.0/frac, xl)
+    xr = reweight(lambda x : 1.0/(1 - frac), xr)
+
+  return xl , xr
 
 
 def bootstrap \
@@ -98,6 +103,8 @@ def reweight \
 
   idxs = numpy.arange(mix.count)
 
+  # TODO
+  # we are anyway running samples() here -- could we return and/or update?
   return \
     SampledMixture \
     ( mix.samples

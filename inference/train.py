@@ -113,6 +113,7 @@ def readarr(xsectimeslumi, fname):
 
   # TODO
   # need to smear b-tagging and tau id
+  # JES, JER, etc
   arr = awkward.to_regular(arr).to_numpy().astype(numpy.float32)[:,:,1:]
 
   mask = numpy.any(arr != 999, axis=2)
@@ -131,7 +132,7 @@ def readarr(xsectimeslumi, fname):
 
 
 allsamples = \
-  { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
+  { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC, True)
     for k in [ "top" , "HH" ]
   }
 
@@ -176,7 +177,6 @@ def buildbatch(knext, pois, nps, samps):
   return stack(batches) , stack(evtmasks) , stack(jetmasks)
 
 
-
 def prior(knext, b):
   k , knext = split(knext)
   pois = MAXMU * random.uniform(k, shape=(b,))
@@ -213,7 +213,7 @@ def step(params, opt_state, batch, evtmasks, jetmasks, pois):
   return params, opt_state, loss_value
 
 
-def plot(epoch, pois, predicts):
+def plot(prefix, pois, predicts):
   mus = predicts[:,0]
   sigmas = predicts[:,1]
 
@@ -226,7 +226,7 @@ def plot(epoch, pois, predicts):
   bins = numpy.mgrid[-3:3:30j]
 
   plt.hist(pulls, bins=bins)
-  fig.savefig("figs/pulls-%02d.png" % epoch)
+  fig.savefig("%s-pulls.png" % prefix)
 
 
   fig = Figure((6, 6))
@@ -235,7 +235,7 @@ def plot(epoch, pois, predicts):
   bins = numpy.mgrid[-3:3:30j]
 
   plt.hist(diffs, bins=bins)
-  fig.savefig("figs/diffs-%02d.png" % epoch)
+  fig.savefig("%s-diffs.png" % prefix)
 
 
   fig = Figure((6, 6))
@@ -244,7 +244,7 @@ def plot(epoch, pois, predicts):
   bins = numpy.mgrid[0:MAXMU:25j]
 
   plt.hist2d(pois, mus, bins=bins)
-  fig.savefig("figs/poi-%02d.png" % epoch)
+  fig.savefig("%s-pois.png" % prefix)
 
   return
 
@@ -286,6 +286,13 @@ k , knext = split(knext)
 validbatch , validevtmasks , validjetmasks = \
   buildbatch(k, validpois, validnps, validsamps)
 
+k , knext = split(knext)
+testpois , testnps = prior(k, NVALIDBATCHES)
+
+k , knext = split(knext)
+testbatch , testevtmasks , testjetmasks = \
+  buildbatch(k, testpois, testnps, trainsamps)
+
 
 for epoch in range(NEPOCHS):
   print("start epoch %02d" % epoch)
@@ -305,9 +312,13 @@ for epoch in range(NEPOCHS):
       step(params, opt_state, batch, evtmasks, jetmasks, pois)
 
 
+  outs = numpy.exp(forward(params, testbatch, testevtmasks, testjetmasks))
+
+  plot("figs/test-%02d" % epoch, testpois, outs)
+
   outs = numpy.exp(forward(params, validbatch, validevtmasks, validjetmasks))
 
-  plot(epoch, validpois, outs)
+  plot("figs/valid-%02d" % epoch, validpois, outs)
 
   k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
