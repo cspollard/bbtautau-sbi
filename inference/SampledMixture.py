@@ -13,8 +13,11 @@ split = random.split
 # e.g. provide a member alterations that is applied after sampling
 # see https://hackage.haskell.org/package/mwc-probability-2.3.1/docs/System-Random-MWC-Probability.html#t:Prob
 
-# samples : a list of arrays
-# this is a list so that we can e.g. carry masks through
+# TODO
+# where is really out of place... could make it more "local" in concat.
+
+# samples : a function from indices to Any
+# where : a way to conditionally join the outcomes of samples
 # weights : a corresponding array of weights that are used for sampling
 Indexed = Callable[[jax.Array], Any]
 class SampledMixture:
