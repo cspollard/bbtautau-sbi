@@ -17,6 +17,8 @@ from tqdm import tqdm
 from SampledMixture \
   import mixturedict, randompartition, reweight, concat2
 
+from matplotlib.figure import Figure
+
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
@@ -26,12 +28,13 @@ NEPOCHS = 50
 NBATCHES = 512
 BATCHSIZE = 32
 LR = 1e-3
+MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
 
 # how many datasets in the valid sample
-NVALIDBATCHES = 1024
+NVALIDBATCHES = 2048
 
 
 xsecs = { "top" : 100 , "HH" : 10 }
@@ -127,18 +130,13 @@ def readarr(xsectimeslumi, fname):
     )
 
 
-# allsamples = \
-#   { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
-#     for k in [ "top" , "HH" ]
-#   }
-
-# validsamps = { k : m[0] for k , m in allsamples.items() }
-# trainsamps = { k : m[1] for k , m in allsamples.items() }
-
 allsamples = \
-  { k : readarr(xsecs[k] , k + ".csv")
+  { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
     for k in [ "top" , "HH" ]
   }
+
+validsamps = { k : m[0] for k , m in allsamples.items() }
+trainsamps = { k : m[1] for k , m in allsamples.items() }
 
 
 print("done reading in samples")
@@ -154,14 +152,15 @@ def generate(knext, pois, nps, samps):
 
 
 # TODO
-# this strategy results in an extremely slow startup because of the for-loop in
-# buildbatch.
+# this strategy results in an extremely slow first batch because of the for-loop
+# in buildbatch. 
+# could we do one pass with b = 1, then ramp up to b = BATCHSIZE?
 @jax.jit
 def buildbatch_train(knext, pois, nps):
-  return buildbatch(knext, pois, nps)
+  return buildbatch(knext, pois, nps, trainsamps)
 
 
-def buildbatch(knext, pois, nps):
+def buildbatch(knext, pois, nps, samps):
   nbatch = pois.shape[0]
 
   batches = []
@@ -169,7 +168,7 @@ def buildbatch(knext, pois, nps):
   evtmasks = []
   for i in range(nbatch):
     k , knext = split(knext)
-    batch , masks = generate(k, pois[i], nps[i], allsamples)
+    batch , masks = generate(k, pois[i], nps[i], samps)
     batches.append(batch["events"])
     jetmasks.append(batch["jetmasks"])
     evtmasks.append(masks)
@@ -180,7 +179,7 @@ def buildbatch(knext, pois, nps):
 
 def prior(knext, b):
   k , knext = split(knext)
-  pois = 5 * random.uniform(k, shape=(b,))
+  pois = MAXMU * random.uniform(k, shape=(b,))
   nps = relu(1 + 0.1 * random.normal(k, shape=(b,)))
   return pois , nps
 
@@ -214,6 +213,66 @@ def step(params, opt_state, batch, evtmasks, jetmasks, pois):
   return params, opt_state, loss_value
 
 
+def plot(epoch, pois, predicts):
+  mus = predicts[:,0]
+  sigmas = predicts[:,1]
+
+  diffs = mus - pois
+  pulls = diffs / sigmas
+
+  fig = Figure((6, 6))
+  plt = fig.add_subplot()
+
+  bins = numpy.mgrid[-3:3:30j]
+
+  plt.hist(pulls, bins=bins)
+  fig.savefig("figs/pulls-%02d.png" % epoch)
+
+
+  fig = Figure((6, 6))
+  plt = fig.add_subplot()
+
+  bins = numpy.mgrid[-3:3:30j]
+
+  plt.hist(diffs, bins=bins)
+  fig.savefig("figs/diffs-%02d.png" % epoch)
+
+
+  fig = Figure((6, 6))
+  plt = fig.add_subplot()
+
+  bins = numpy.mgrid[0:MAXMU:25j]
+
+  plt.hist2d(pois, mus, bins=bins)
+  fig.savefig("figs/poi-%02d.png" % epoch)
+
+  return
+
+
+  print("nevt, nps, pois, posterior mu, posterior sigma")
+  print(reduce(evtmasks[idxs], "b e -> b", "sum"))
+  print(nps[idxs])
+  print(pois[idxs])
+  print(predicts[idxs,0])
+  print(predicts[idxs,1])
+  print()
+  print("sample diffs")
+  print(diff[idxs])
+  print()
+  print("sample pulls")
+  print(pull[idxs])
+  print()
+  print("mean pull")
+  print(pull.mean())
+  print()
+  print("std pull")
+  print(numpy.std(pull))
+  print()
+  print("end epoch %02d" % epoch)
+  print()
+
+
+
 sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
 optimizer = optax.adam(learning_rate=sched)
 opt_state = optimizer.init(params)
@@ -225,7 +284,7 @@ validpois , validnps = prior(k, NVALIDBATCHES)
 
 k , knext = split(knext)
 validbatch , validevtmasks , validjetmasks = \
-  buildbatch(k, validpois, validnps)
+  buildbatch(k, validpois, validnps, validsamps)
 
 
 for epoch in range(NEPOCHS):
@@ -247,6 +306,8 @@ for epoch in range(NEPOCHS):
 
 
   outs = numpy.exp(forward(params, validbatch, validevtmasks, validjetmasks))
+
+  plot(epoch, validpois, outs)
 
   k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
