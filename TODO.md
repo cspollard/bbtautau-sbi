@@ -8,7 +8,7 @@ TODOs
 - tau- and b-tagging
 - fake taus and b-jets
 - train discriminant + binned likelihood fit (or marginalize?)
-
+- kL vs xsec posteriors
 
 Things to check
 ---------------
