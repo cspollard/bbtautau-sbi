@@ -58,7 +58,7 @@ class SampledMixture:
     idxs = random.choice(k, self.count, p=self.weights / lam, shape=(maxn,))
 
     n = random.poisson(knext, lam)
-    # probably too slow?
+    # probably too slow to assert?
     # assert n <= maxn
     mask = numpy.arange(maxn) < n
 

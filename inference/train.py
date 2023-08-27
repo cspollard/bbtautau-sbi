@@ -20,7 +20,7 @@ from SampledMixture \
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 256
+MAXEVTS = 150
 
 NEPOCHS = 50
 NBATCHES = 128
@@ -124,20 +124,12 @@ def readarr(xsectimeslumi, fname):
 
 
 allsamples = \
-  { k : readarr(xsecs[k] , k + ".csv")
+  { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
     for k in [ "top" , "HH" ]
   }
 
-validsamps = allsamples
-trainsamps = allsamples
-
-# allsamples = \
-#   { k : randompartition(key(0), readarr(xsecs[k] , k + ".csv"), VALIDFRAC)
-#     for k in [ "top" , "HH" ]
-#   }
-
-# validsamps = { k : m[0] for k , m in allsamples.items() }
-# trainsamps = { k : m[1] for k , m in allsamples.items() }
+validsamps = { k : m[0] for k , m in allsamples.items() }
+trainsamps = { k : m[1] for k , m in allsamples.items() }
 
 print("done reading in samples")
 
@@ -153,7 +145,7 @@ def generate(knext, pois, nps, samps):
 
 # TODO
 # I bet this is the slow bit...
-# can't jit this at the moment...
+# can't jit due to non-Array inputs
 # @jax.jit
 def buildbatch(knext, pois, nps, samps):
   nbatch = pois.shape[0]
