@@ -22,13 +22,13 @@ from matplotlib.figure import Figure
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 200
+MAXEVTS = 350
 
 NEPOCHS = 50
 NBATCHES = 512
 BATCHSIZE = 32
-LR = 1e-3
-MAXMU = 5
+LR = 3e-4
+MAXMU = 10
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
@@ -151,7 +151,7 @@ print("done reading in samples")
 
 
 # pois: HH mu
-# nps: tt mu
+# nps: mu for different bkgs
 def generate(knext, pois, nps, samps):
   procs = []
   for prock in samps:
@@ -200,7 +200,7 @@ def prior(knext, b):
     d = {}
     for p in [ "top" , "ZH" , "higgs" ]:
       k , knext = split(knext)
-      d[p] = relu(1 + 0.3 * random.normal(k, shape=(1,)))
+      d[p] = relu(1 + 0.6 * random.normal(k, shape=(1,)))
 
     nps.append(d)
 
@@ -272,29 +272,6 @@ def plot(prefix, pois, predicts):
   return
 
 
-  print("nevt, nps, pois, posterior mu, posterior sigma")
-  print(reduce(evtmasks[idxs], "b e -> b", "sum"))
-  print(nps[idxs])
-  print(pois[idxs])
-  print(predicts[idxs,0])
-  print(predicts[idxs,1])
-  print()
-  print("sample diffs")
-  print(diff[idxs])
-  print()
-  print("sample pulls")
-  print(pull[idxs])
-  print()
-  print("mean pull")
-  print(pull.mean())
-  print()
-  print("std pull")
-  print(numpy.std(pull))
-  print()
-  print("end epoch %02d" % epoch)
-  print()
-
-
 
 sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
 optimizer = optax.adam(learning_rate=sched)
@@ -348,7 +325,7 @@ for epoch in range(NEPOCHS):
 
   diff = outs[:,0] - validpois
   pull = diff / outs[:,1]
-  print("nevt, nps, pois, posterior mu, posterior sigma")
+  print("nevt, pois, posterior mu, posterior sigma")
   print(reduce(validevtmasks[idxs], "b e -> b", "sum"))
   print(validpois[idxs])
   print(outs[idxs,0])
@@ -372,7 +349,7 @@ for epoch in range(NEPOCHS):
 print()
 print("end of training")
 print()
-print("nevt, nps, pois, and outputs + uncertainties")
+print("nevt, pois, and outputs + uncertainties")
 print(reduce(validevtmasks, "b e -> b", "sum"))
 print(validpois)
 print(outs[:,0])

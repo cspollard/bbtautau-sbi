@@ -1,14 +1,17 @@
 TODOs
 -----
-- class to handle dataset building?
-  - can this be generalized?
 - implement normalizing flows
 - uncertainty on e.g. sumET in top?
-- uncertainties on bkg fractions
+- jES/jER and uncertainties
+- event-wide transformer?
+- faster data loading
+- tau- and b-tagging
+- fake taus and b-jets
+- train discriminant + binned likelihood fit (or marginalize?)
 
 
 Things to check
-- impact of jES/jER
-- impact of tau- and b-tagging
+---------------
 - what are per-jet and per-event features in sig and bkg?
-- impact of other bkgs
+- are backgrounds correct? make some plots...
+- coverage
