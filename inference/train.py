@@ -15,7 +15,7 @@ from einops import repeat, rearrange, reduce
 from tqdm import tqdm
 
 from SampledMixture \
-  import mixturedict, randompartition, reweight, concat2
+  import mixturedict, randompartition, reweight, concat
 
 from matplotlib.figure import Figure
 
@@ -37,7 +37,7 @@ VALIDFRAC = 0.3
 NVALIDBATCHES = 2048
 
 
-xsectimeslumis = { "top" : 100 , "HH" : 10 }
+xsectimeslumis = { "top" : 100 , "ZH" : 10 , "higgs" : 10 , "HH" : 10 }
 
 
 split = random.split
@@ -137,10 +137,10 @@ allsamples = \
       ( key(0)
       , readarr(xsectimeslumis[k], k + ".csv")
       , VALIDFRAC
-      , True
+      , compensate=True
       )
 
-    for k in [ "top" , "HH" ]
+    for k in [ "top" , "ZH" , "higgs" , "HH" ]
   }
 
 validsamps = { k : m[0] for k , m in allsamples.items() }
@@ -153,10 +153,17 @@ print("done reading in samples")
 # pois: HH mu
 # nps: tt mu
 def generate(knext, pois, nps, samps):
-  HH = reweight(lambda x: pois, samps["HH"])
-  top = reweight(lambda x: nps, samps["top"])
+  procs = []
+  for prock in samps:
+    tmp = samps[prock]
+    if prock in nps:
+      tmp = reweight(lambda x: nps[prock], tmp)
+    if prock == "HH":
+      tmp = reweight(lambda x: pois, tmp)
 
-  return concat2(HH, top).sample(knext, MAXEVTS)
+    procs.append(tmp)
+
+  return concat(procs).sample(knext, MAXEVTS)
 
 
 # TODO
@@ -187,7 +194,16 @@ def buildbatch(knext, pois, nps, samps):
 def prior(knext, b):
   k , knext = split(knext)
   pois = MAXMU * random.uniform(k, shape=(b,))
-  nps = relu(1 + 0.1 * random.normal(k, shape=(b,)))
+
+  nps = []
+  for i in range(b):
+    d = {}
+    for p in [ "top" , "ZH" , "higgs" ]:
+      k , knext = split(knext)
+      d[p] = relu(1 + 0.3 * random.normal(k, shape=(1,)))
+
+    nps.append(d)
+
   return pois , nps
 
 
@@ -334,7 +350,6 @@ for epoch in range(NEPOCHS):
   pull = diff / outs[:,1]
   print("nevt, nps, pois, posterior mu, posterior sigma")
   print(reduce(validevtmasks[idxs], "b e -> b", "sum"))
-  print(validnps[idxs])
   print(validpois[idxs])
   print(outs[idxs,0])
   print(outs[idxs,1])
@@ -359,7 +374,6 @@ print("end of training")
 print()
 print("nevt, nps, pois, and outputs + uncertainties")
 print(reduce(validevtmasks, "b e -> b", "sum"))
-print(validnps)
 print(validpois)
 print(outs[:,0])
 print(outs[:,1])
