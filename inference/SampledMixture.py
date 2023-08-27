@@ -16,10 +16,12 @@ split = random.split
 # samples : a list of arrays
 # this is a list so that we can e.g. carry masks through
 # weights : a corresponding array of weights that are used for sampling
+Indexed = Callable[[jax.Array], Any]
 class SampledMixture:
   def __init__ \
     ( self
-    , samples : Callable[[Any], Any]
+    , samples : Indexed
+    , where : Callable[[jax.Array, Indexed, Indexed], Indexed]
     , weights : jax.Array
     ) :
 
@@ -28,6 +30,7 @@ class SampledMixture:
 
     self.samples = samples
     self.weights = weights
+    self.where = where
 
     return
 
@@ -66,7 +69,12 @@ def reweight \
 
   idxs = numpy.arange(mix.count)
 
-  return SampledMixture(mix.samples, f(mix.samples(idxs)) * mix.weights)
+  return \
+    SampledMixture \
+    ( mix.samples
+    , mix.where
+    , f(mix.samples(idxs)) * mix.weights
+    )
 
 
 def alter \
@@ -74,12 +82,18 @@ def alter \
   , mix : SampledMixture
   ) -> SampledMixture :
 
-  return SampledMixture(lambda idxs: f(mix.samples(idxs)), mix.weights)
+  return \
+    SampledMixture \
+    ( lambda idxs: f(mix.samples(idxs))
+    , mix.where
+    , mix.weights
+    )
 
 
 def join \
-  ( l : Callable[[jax.Array], Any]
-  , r : Callable[[jax.Array], Any]
+  ( l : Indexed
+  , r : Indexed
+  , where : Callable[[jax.Array, Indexed, Indexed], Indexed]
   , lenl : int
   ) -> Callable[[jax.Array], Any] :
 
@@ -87,10 +101,11 @@ def join \
     test = idxs < lenl
     # TODO
     # lots of unnecessary zero accesses...
+    # won't work with zero-len arrays.
     lidxs = numpy.where(test, idxs, 0)
     ridxs = numpy.where(test, 0, idxs - lenl)
 
-    return numpy.where(test, l(lidxs), r(ridxs))
+    return where(test, l, r)(idxs)
 
   return f
 
@@ -100,8 +115,13 @@ def concat2 \
   , m2 : SampledMixture
   ) -> SampledMixture :
 
-  samps = join(m1.samples, m2.samples, m1.count)
-  return SampledMixture(samps, numpy.concatenate([m1.weights, m2.weights]))
+  samps = join(m1.samples, m2.samples, m1.where, m1.count)
+  return \
+    SampledMixture \
+    ( samps
+    , m1.where
+    , numpy.concatenate([m1.weights, m2.weights])
+    )
 
 
 def concat \
@@ -127,12 +147,73 @@ def mix \
   return concat(ms)
 
 
+arrlist = list[jax.Array]
+indexedlist = Callable[[jax.Array], arrlist]
+
+def indexlist \
+  ( xs : arrlist
+  ) -> indexedlist :
+
+  def f(idxs : jax.Array) -> arrlist :
+    return [ x[idxs] for x in xs ]
+
+  return f
+
+
+def wherelist \
+  ( cond : jax.Array
+  , l : indexedlist
+  , r : indexedlist
+  ) -> indexedlist :
+
+  def f(idxs):
+    return [ numpy.where(cond, x, y) for (x, y) in zip(l(idxs), r(idxs)) ]
+
+  return f
+
+
+def indexdict(xs) -> indexedlist :
+
+  def f(idxs : jax.Array) :
+    return { k : x[idxs] for k , x in xs.items() }
+
+  return f
+
+
+def wheredict \
+  ( cond : jax.Array
+  , l
+  , r
+  ) :
+
+  def f(idxs):
+    ld = l(idxs)
+    rd = r(idxs)
+
+    # would prefer this, but it's probably slow.
+    # assert ld.keys() == rd.keys()
+
+    return \
+      { k : numpy.where(cond, ld[k], rd[k]) for k in ld }
+
+  return f
+
+
 if __name__ == '__main__':
-  test = SampledMixture(lambda idx: numpy.arange(10)[idx], numpy.ones(10))
+  test = \
+    SampledMixture \
+    ( indexdict({ "hi" : numpy.arange(10) , "bye" : numpy.arange(10) })
+    , wheredict
+    , numpy.ones(10)
+    )
+
+  def update(d, k, f):
+    return 
+
   test = concat([test, test])
   test = mix([(test, 0.5), (test, 0.5)])
-  test = alter(lambda x: x * 2, test)
-  test = reweight(lambda x: 1 + x * 0.005, test)
+  test = alter(lambda d: d | { "hi" : d["hi"] * 2 }, test)
+  test = reweight(lambda d: 1 + d["hi"] * 0.005, test)
   print(test.weights)
 
   out, mask = test.sample(key(0), 50)
