@@ -13,11 +13,14 @@ split = random.split
 # e.g. provide a member alterations that is applied after sampling
 # see https://hackage.haskell.org/package/mwc-probability-2.3.1/docs/System-Random-MWC-Probability.html#t:Prob
 
+# samples : a list of arrays
+# this is a list so that we can e.g. carry masks through
+# weights : a corresponding array of weights that are used for sampling
 class SampledMixture:
-  def __init__(self, samples, weights):
-    assert samples.shape[0] == weights.shape[0]
-
+  def __init__(self, samples : list[jax.Array], weights : jax.Array):
     self.count = weights.shape[0]
+    assert samples.shape[0] == self.count
+
     self.samples = samples
     self.weights = weights
 
@@ -28,7 +31,8 @@ class SampledMixture:
     lam = self.weights.sum()
 
     k , knext = split(knext)
-    samps = random.choice(k, self.samples, p=self.weights / lam, shape=(maxn,))
+    idxs = random.choice(k, self.count, p=self.weights / lam, shape=(maxn,))
+    samps = [ s[idxs] for s in self.samples ]
 
     n = random.poisson(knext, lam)
     mask = numpy.arange(maxn) < n
@@ -60,7 +64,7 @@ def bootstrap \
 
 
 def reweight \
-  ( f : Callable[[jax.Array], jax.Array]
+  ( f : Callable[[list[jax.Array]], jax.Array]
   , mix : SampledMixture
   ) -> SampledMixture :
 

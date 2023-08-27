@@ -160,7 +160,7 @@ def sample(k, lams, maxn):
   return tmp , mask
 
 
-def appparams(knext, pois, nps, maxn, dataset):
+def generate(knext, pois, nps, maxn, dataset):
 
   evts = numpy.concatenate([ dataset["top"][0] , dataset["HH"][0] ])
   masks = numpy.concatenate([ dataset["top"][1] , dataset["HH"][1] ])
