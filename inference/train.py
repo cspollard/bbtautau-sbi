@@ -246,8 +246,6 @@ for epoch in range(NEPOCHS):
 
   plot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
 
-  exit()
-
   k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
 
