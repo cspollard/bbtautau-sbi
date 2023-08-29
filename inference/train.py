@@ -3,27 +3,25 @@ import jax.numpy as numpy
 import jax.random as random
 import jax
 
-from flax.linen import Module, Dense, Sequential, LayerNorm, relu, softmax
+from flax.linen import Dense, Sequential, relu, softmax
 
 import optax
-
-import awkward
-from numpy import genfromtxt
 
 from einops import repeat, rearrange, reduce
 
 from tqdm import tqdm
 
-from SampledMixture \
-  import mixturedict, randompartition, reweight, concat
+from SampledMixture import randompartition, reweight, concat
 
-from matplotlib.figure import Figure
+from IO import readarr
+from plots import plot
 
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
 MAXEVTS = 350
 
+NNODES = 64
 NEPOCHS = 50
 NBATCHES = 512
 BATCHSIZE = 32
@@ -36,13 +34,12 @@ VALIDFRAC = 0.3
 # how many datasets in the valid sample
 NVALIDBATCHES = 2048
 
-
 xsectimeslumis = { "top" : 100 , "ZH" : 10 , "higgs" : 10 , "HH" : 10 }
 
-
+# some useful aliases
 split = random.split
-array = numpy.array
 stack = numpy.stack
+
 
 def id(xs):
   return xs
@@ -57,15 +54,15 @@ def MLP(features, activations):
   return Sequential([x for pair in laypairs for x in pair])
 
 
-perjet = MLP([64]*6 , [relu]*5 + [softmax])
-perevt = MLP([64]*6 , [relu]*5 + [softmax])
-inference = MLP([64]*6 + [2] , [relu]*6 + [id])
+perjet = MLP([NNODES]*6 , [relu]*5 + [softmax])
+perevt = MLP([NNODES]*6 , [relu]*5 + [softmax])
+inference = MLP([NNODES]*6 + [2] , [relu]*6 + [id])
 
 
 params = \
   { "perjet" : perjet.init(key(0), numpy.ones((1, 5)))
-  , "perevt" : perevt.init(key(0), numpy.ones((1, 64)))
-  , "inference" : inference.init(key(1), numpy.ones((1, 64)))
+  , "perevt" : perevt.init(key(0), numpy.ones((1, NNODES)))
+  , "inference" : inference.init(key(1), numpy.ones((1, NNODES)))
   }
 
 
@@ -97,45 +94,11 @@ def forward(params, inputs, evtmasks, jetmasks):
   return inference.apply(params["inference"], summed)
 
 
-def readarr(xsectimeslumi, fname):
-  arr = genfromtxt(fname, delimiter=",", skip_header=1)
-  
-  events = awkward.run_lengths(arr[:,0])
-
-  arr = awkward.unflatten(arr, events)
-
-  arr = \
-    awkward.fill_none \
-    ( awkward.pad_none( arr , MAXJETS , clip=True , axis=1 )
-    , [999]*6
-    , axis=1
-    )
-
-  # TODO
-  # need to smear b-tagging and tau id
-  # JES, JER, etc
-  arr = awkward.to_regular(arr).to_numpy().astype(numpy.float32)[:,:,1:]
-
-  mask = numpy.any(arr != 999, axis=2)
-
-  # divide momenta by 20 GeV
-  arr[:,:,2:5] = arr[:,:,2:5] / 20
-
-  l = len(mask)
-  weights = xsectimeslumi / l * numpy.ones((l,))
-
-  return \
-    mixturedict \
-    ( { "events" : array(arr), "jetmasks" : array(mask) }
-    , array(weights)
-    )
-
-
 allsamples = \
   { k : \
       randompartition \
       ( key(0)
-      , readarr(xsectimeslumis[k], k + ".csv")
+      , readarr(xsectimeslumis[k], k + ".csv", maxjets=MAXJETS)
       , VALIDFRAC
       , compensate=True
       )
@@ -236,43 +199,6 @@ def step(params, opt_state, batch, evtmasks, jetmasks, pois):
   return params, opt_state, loss_value
 
 
-def plot(prefix, pois, predicts):
-  mus = predicts[:,0]
-  sigmas = predicts[:,1]
-
-  diffs = mus - pois
-  pulls = diffs / sigmas
-
-  fig = Figure((6, 6))
-  plt = fig.add_subplot()
-
-  bins = numpy.mgrid[-3:3:30j]
-
-  plt.hist(pulls, bins=bins)
-  fig.savefig("%s-pulls.png" % prefix)
-
-
-  fig = Figure((6, 6))
-  plt = fig.add_subplot()
-
-  bins = numpy.mgrid[-3:3:30j]
-
-  plt.hist(diffs, bins=bins)
-  fig.savefig("%s-diffs.png" % prefix)
-
-
-  fig = Figure((6, 6))
-  plt = fig.add_subplot()
-
-  bins = numpy.mgrid[0:MAXMU:25j]
-
-  plt.hist2d(pois, mus, bins=bins)
-  fig.savefig("%s-pois.png" % prefix)
-
-  return
-
-
-
 sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
 optimizer = optax.adam(learning_rate=sched)
 opt_state = optimizer.init(params)
@@ -314,11 +240,13 @@ for epoch in range(NEPOCHS):
 
   outs = numpy.exp(forward(params, testbatch, testevtmasks, testjetmasks))
 
-  plot("figs/test-%02d" % epoch, testpois, outs)
+  plot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
 
   outs = numpy.exp(forward(params, validbatch, validevtmasks, validjetmasks))
 
-  plot("figs/valid-%02d" % epoch, validpois, outs)
+  plot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
+
+  exit()
 
   k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
