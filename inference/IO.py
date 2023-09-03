@@ -3,7 +3,7 @@ import jax.numpy as numpy
 import awkward
 from numpy import genfromtxt
 
-from SampledMixture import mixturedict
+from mixjax import mixturedict
 
 array = numpy.array
 
