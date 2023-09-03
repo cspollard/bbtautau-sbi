@@ -4,3 +4,4 @@ einops
 awkward
 six
 tqdm
+git+https://github.com/cspollard/mixjax@ab747d18f42f17158cdebce2323bb71779b68520

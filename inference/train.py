@@ -11,7 +11,7 @@ from einops import repeat, rearrange, reduce
 
 from tqdm import tqdm
 
-from SampledMixture import randompartition, reweight, concat
+from mixjax import randompartition, reweight, concat
 
 from IO import readarr
 from plots import plot
