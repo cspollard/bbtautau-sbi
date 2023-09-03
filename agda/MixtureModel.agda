@@ -1,17 +1,11 @@
 module MixtureModel where
 
-open import Level using (Level; _⊔_) renaming (suc to lsuc)
+open import Level using (Level; _⊔_; 0ℓ) renaming (suc to lsuc)
 
--- record Generator (r i x : Level) : Set (lsuc (r ⊔ i ⊔ x)) where
---   field
---     R : Set r
---     I : Set i
---     X : Set x
---     gen : R → I → X
 
--- _⊞_ : ∀ {r r' i i' x x'} → 
 
 open import Algebra using (Monoid)
+
 module _ {w ℓ a : Level} (WM : Monoid w ℓ) (A : Set a) where
   open Monoid WM renaming (Carrier to W)
     renaming (_≈_ to _≈ʷ_; setoid to w-setoid)
