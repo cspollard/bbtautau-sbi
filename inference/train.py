@@ -4,6 +4,7 @@ import jax.random as random
 import jax
 
 from flax.linen import Dense, Sequential, relu, softmax
+from flax.training import train_state, checkpoints
 
 import optax
 
@@ -32,9 +33,14 @@ MAXMU = 10
 VALIDFRAC = 0.3
 
 # how many datasets in the valid sample
-NVALIDBATCHES = 2048
+NVALIDBATCHES = 128 # 2048
 
+# checkpoints
+CKPTDIR = 'checkpoints'
+
+# luminosities
 xsectimeslumis = { "top" : 100 , "ZH" : 10 , "higgs" : 10 , "HH" : 10 }
+
 
 # some useful aliases
 split = random.split
@@ -111,6 +117,7 @@ trainsamps = { k : m[1] for k , m in allsamples.items() }
 
 
 print("done reading in samples")
+print()
 
 
 # pois: HH mu
@@ -189,19 +196,33 @@ def runloss(params, batch, evtmasks, jetmasks, pois):
 
 
 @jax.jit
-def step(params, opt_state, batch, evtmasks, jetmasks, pois):
+def step(opt_state, batch, evtmasks, jetmasks, pois):
   loss_value, grads = \
-    jax.value_and_grad(runloss)(params, batch, evtmasks, jetmasks, pois)
+    jax.value_and_grad(runloss) \
+      (opt_state.params, batch, evtmasks, jetmasks, pois)
 
-  updates, opt_state = optimizer.update(grads, opt_state, params)
-  params = optax.apply_updates(params, updates)
+  new_opt_state = opt_state.apply_gradients(grads)
 
-  return params, opt_state, loss_value
+  return new_opt_state , loss_value
 
+####################3
 
 sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
 optimizer = optax.adam(learning_rate=sched)
-opt_state = optimizer.init(params)
+
+print("setting up training state")
+print()
+
+opt_state = \
+  train_state.TrainState.create \
+  ( apply_fn=forward
+  , params=params
+  , tx=optimizer
+  )
+
+
+print("building validation sample")
+print()
 
 knext = key(10)
 
@@ -212,6 +233,10 @@ k , knext = split(knext)
 validbatch , validevtmasks , validjetmasks = \
   buildbatch(k, validpois, validnps, validsamps)
 
+
+print("building test sample")
+print()
+
 k , knext = split(knext)
 testpois , testnps = prior(k, NVALIDBATCHES)
 
@@ -220,11 +245,16 @@ testbatch , testevtmasks , testjetmasks = \
   buildbatch(k, testpois, testnps, trainsamps)
 
 
+
 for epoch in range(NEPOCHS):
   print("start epoch %02d" % epoch)
 
+
   if epoch == 0:
     print("JIT may take some time during the first batch...")
+
+  if not (epoch % 10):
+    checkpoints.save_checkpoint(ckpt_dir=CKPTDIR, target=opt_state, step=epoch//10)
 
   print()
 
@@ -234,15 +264,15 @@ for epoch in range(NEPOCHS):
     k, knext = split(knext)
     batch , evtmasks , jetmasks = buildbatch_train(k, pois, nps)
 
-    params, opt_state, loss_value = \
-      step(params, opt_state, batch, evtmasks, jetmasks, pois)
+    opt_state, loss_value = \
+      step(opt_state, batch, evtmasks, jetmasks, pois)
 
 
-  outs = numpy.exp(forward(params, testbatch, testevtmasks, testjetmasks))
+  outs = numpy.exp(forward(opt_state.params, testbatch, testevtmasks, testjetmasks))
 
   plot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
 
-  outs = numpy.exp(forward(params, validbatch, validevtmasks, validjetmasks))
+  outs = numpy.exp(forward(opt_state.params, validbatch, validevtmasks, validjetmasks))
 
   plot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
 
