@@ -201,7 +201,7 @@ def step(opt_state, batch, evtmasks, jetmasks, pois):
     jax.value_and_grad(runloss) \
       (opt_state.params, batch, evtmasks, jetmasks, pois)
 
-  new_opt_state = opt_state.apply_gradients(grads)
+  new_opt_state = opt_state.apply_gradients(grads=grads)
 
   return new_opt_state , loss_value
 
