@@ -97,6 +97,8 @@ namespace Rivet {
     /// Perform the per-event analysis
     void analyze(const Event& event) {
 
+      cout << _weightNames() << endl;
+
       // Retrieve dressed leptons, sorted by pT
       const Jets& jets = 
         apply<FastJets>(event, "jets")

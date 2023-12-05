@@ -3,7 +3,7 @@ from matplotlib.figure import Figure
 import jax.numpy as numpy
 
 
-def plot(prefix, pois, predicts, poibins):
+def validplot(prefix, pois, predicts, poibins):
   mus = predicts[:,0]
   sigmas = predicts[:,1]
 

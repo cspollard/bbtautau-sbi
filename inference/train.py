@@ -15,7 +15,7 @@ from tqdm import tqdm
 from mixjax import randompartition, reweight, concat
 
 from IO import readarr
-from plots import plot
+from validplots import validplot
 
 # how many jets / evt
 MAXJETS = 8
@@ -76,8 +76,6 @@ params = \
 def forward(params, inputs, evtmasks, jetmasks):
   batchsize = inputs.shape[0]
   nevt = inputs.shape[1]
-  njets = inputs.shape[2]
-  nfeats = inputs.shape[3]
 
   flattened = rearrange(inputs, "b e j f -> (b e j) f")
   unflattened = perjet.apply(params["perjet"], flattened)
@@ -270,11 +268,11 @@ for epoch in range(NEPOCHS):
 
   outs = numpy.exp(forward(opt_state.params, testbatch, testevtmasks, testjetmasks))
 
-  plot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
+  valiplot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
 
   outs = numpy.exp(forward(opt_state.params, validbatch, validevtmasks, validjetmasks))
 
-  plot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
+  valiplot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
 
   k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
