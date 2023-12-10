@@ -1,5 +1,6 @@
 // -*- C++ -*-
 #include "Rivet/Analysis.hh"
+#include "Rivet/AnalysisHandler.hh"
 #include "Rivet/Projections/FinalState.hh"
 #include "Rivet/Projections/PromptFinalState.hh"
 #include "Rivet/Projections/VetoedFinalState.hh"
@@ -27,6 +28,8 @@ namespace Rivet {
 
       // Initialise and register projections
 
+      // handler().skipMultiWeights(true);
+
       // The basic final-state projection:
       // all final-state particles within
       // the given eta acceptance
@@ -52,7 +55,6 @@ namespace Rivet {
       DressedLeptons dressedmuons(photons, muons, 0.1, leptoncuts);
       declare(dressedmuons, "dressedmuons");
 
-
       VetoedFinalState jetfs(vfs);
       jetfs.addVetoOnThisFinalState(dressedelectrons);
       jetfs.addVetoOnThisFinalState(dressedmuons);
@@ -70,6 +72,7 @@ namespace Rivet {
 
       csv = ofstream();
       const string& csvname = getOption("csvname");
+      weighted = getOption("weighted") == "true";
       cout << "writing to csv file " << csvname << endl;
 
       csv.open(csvname);
@@ -81,6 +84,8 @@ namespace Rivet {
         << ","
         << "btagged"
         << ","
+        << "ctagged"
+        << ","
         << "tautagged"
         << ","
         << "px"
@@ -88,6 +93,20 @@ namespace Rivet {
         << "py"
         << ","
         << "pz"
+        << ","
+        << "weight_nom";
+
+      if (weighted)
+        csv
+          << ","
+          << "weight_kl0"
+          << ","
+          << "weight_kl2";
+
+      csv << endl;
+
+      cout
+        << "WARNING: THIS ASSUMES THAT THE FIRST TWO WEIGHTS CORRESPOND TO kL = 0 and kL = 2!!!"
         << endl;
 
       return;
@@ -97,40 +116,40 @@ namespace Rivet {
     /// Perform the per-event analysis
     void analyze(const Event& event) {
 
-      cout << _weightNames() << endl;
 
       // Retrieve dressed leptons, sorted by pT
       const Jets& jets = 
         apply<FastJets>(event, "jets")
           .jetsByPt(Cuts::abseta < 2.5 && Cuts::pT > 20*GeV);
 
-      if (jets.size() < 4) vetoEvent;
-
-      vector<bool> btags, tautags;
-      int nbtag = 0, ntautag = 0;
+      vector<bool> btags, ctags, tautags;
 
       for (const auto& j : jets) {
         bool btag = j.bTagged();
+        bool ctag = j.cTagged();
         bool tautag = !btag && j.tauTagged();
 
         btags.push_back(btag);
+        ctags.push_back(ctag);
         tautags.push_back(tautag);
-
-        nbtag += btag;
-        ntautag += tautag;
       }
 
-      if (nbtag < 2 || ntautag < 2) vetoEvent;
+      const GenEvent* genevent = event.genEvent();
+      const std::valarray<double>& wgts = HepMCUtils::weights(*genevent);
 
       for (int i = 0; i < jets.size(); i++) {
         const Jet& j = jets.at(i);
         bool btag = btags.at(i);
+        bool ctag = ctags.at(i);
         bool tautag = tautags.at(i);
+        double wnom = wgts[0];
 
         csv
           << eventnumber
           << ","
           << int(btag)
+          << ","
+          << int(ctag)
           << ","
           << int(tautag)
           << ","
@@ -139,7 +158,19 @@ namespace Rivet {
           << j.py()
           << ","
           << j.pz()
-          << endl;
+          << ","
+          << wnom;
+
+        if (weighted) {
+          float w0 = wgts[1], w2 = wgts[2];
+          csv
+            << ","
+            << w0
+            << ","
+            << w2;
+        }
+
+        csv << endl;
 
       }
 
@@ -157,6 +188,7 @@ namespace Rivet {
     /// @}
 
     private:
+      bool weighted;
       ofstream csv;
       int eventnumber;
 
