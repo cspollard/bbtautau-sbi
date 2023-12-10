@@ -9,7 +9,7 @@ fi
 
 
 cat <<EOF > $1.cmnd
-Main:analyses = tautaujets:csvname->$1.csv:weighted->$WEIGHTED
+Main:analyses = tautaujets:csvname->$1.csv:weighted->${WEIGHTED}
 Beams:frameType = 4
 Beams:LHEF = $PREFIX/unweighted_events.lhe.gz
 EOF
