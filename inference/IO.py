@@ -12,7 +12,11 @@ def readarr(xsectimeslumi, fname, maxjets):
   
   events = awkward.run_lengths(arr[:,0])
 
-  arr = awkward.unflatten(arr, events)
+  # TODO I'm not sure about this, but I think it should get the jet information.
+  arr = awkward.unflatten(arr[1:7], events)
+
+  # TODO here we read in the weights
+  wgts = awkward.unflatten(arr[7:], events)
 
   arr = \
     awkward.fill_none \
