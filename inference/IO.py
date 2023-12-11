@@ -2,20 +2,21 @@
 import jax.numpy as numpy
 import awkward
 from numpy import genfromtxt
+import einops
 
 from mixjax import mixturedict
 
 array = numpy.array
 
-def readarr(xsectimeslumi, fname, maxjets):
+def readarr(fname, maxjets):
   arr = genfromtxt(fname, delimiter=",", skip_header=1)
   
   events = awkward.run_lengths(arr[:,0])
 
   jets = awkward.unflatten(arr[:,1:7], events)
 
-  # TODO here we read in the weights
-  wgts = awkward.unflatten(arr[:,7:], events)
+  # take the first set of weights for each event
+  wgts = awkward.unflatten(arr[:,7:], events)[:,0]
 
   jets = \
     awkward.fill_none \
@@ -30,14 +31,18 @@ def readarr(xsectimeslumi, fname, maxjets):
   mask = numpy.any(jets != 999, axis=2)
 
   # divide momenta by 20 GeV (just a good normalization guess)
-  jets[:,:,2:5] = jets[:,:,2:5] / 20
+  jets[:,:,2:5] = jets[:,:,3:6] / 20
 
   l = len(mask)
+  # TODO
+  # only _very nearly_ correct.
   weights = wgts / l
+  weights = awkward.to_regular(weights).to_numpy().astype(numpy.float32)
+  if weights.shape[1] != 3:
+    weights = einops.repeat(weights, "e w -> e (3 w)")
 
-  # problem seems to be here.
   return \
     mixturedict \
-    ( { "events" : array(arr), "jetmasks" : array(mask) }
+    ( { "events" : array(jets), "jetmasks" : array(mask) }
     , array(weights)
     )

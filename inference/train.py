@@ -36,10 +36,10 @@ VALIDFRAC = 0.3
 NVALIDBATCHES = 128 # 2048
 
 # checkpoints
-CKPTDIR = 'checkpoints'
+CKPTDIR = './checkpoints'
 
-# luminosities
-xsectimeslumis = { "top" : 100 , "ZH" : 10 , "higgs" : 10 , "HH" : 10 }
+# luminosity in 1/fb
+LUMI = 350
 
 
 # some useful aliases
@@ -66,7 +66,7 @@ inference = MLP([NNODES]*6 + [2] , [relu]*6 + [id])
 
 
 params = \
-  { "perjet" : perjet.init(key(0), numpy.ones((1, 5)))
+  { "perjet" : perjet.init(key(0), numpy.ones((1, 6)))
   , "perevt" : perevt.init(key(0), numpy.ones((1, NNODES)))
   , "inference" : inference.init(key(1), numpy.ones((1, NNODES)))
   }
@@ -102,17 +102,15 @@ allsamples = \
   { k : \
       randompartition \
       ( key(0)
-      , readarr(xsectimeslumis[k], k + ".csv", maxjets=MAXJETS)
+      , readarr(k + ".csv", maxjets=MAXJETS)
       , VALIDFRAC
       , compensate=True
       )
-
-    for k in [ "top" , "ZH" , "higgs" , "HH" ]
+    for k in [ "top" , "ZH" , "higgs" , "HH" , "DYbb" ]
   }
 
 validsamps = { k : m[0] for k , m in allsamples.items() }
 trainsamps = { k : m[1] for k , m in allsamples.items() }
-
 
 print("done reading in samples")
 print()
@@ -124,14 +122,18 @@ def generate(knext, pois, nps, samps):
   procs = []
   for prock in samps:
     tmp = samps[prock]
+
     if prock in nps:
-      tmp = reweight(lambda x: nps[prock], tmp)
+      tmp = reweight(lambda x: LUMI*nps[prock], tmp)
     if prock == "HH":
-      tmp = reweight(lambda x: pois, tmp)
+      tmp = reweight(lambda x: LUMI*pois, tmp)
 
     procs.append(tmp)
 
-  return concat(procs).sample(knext, MAXEVTS)
+  tmp = concat(procs)
+  tmp.weights = tmp.weights[:,0]
+
+  return tmp.sample(knext, MAXEVTS)
 
 
 # TODO
@@ -246,13 +248,16 @@ testbatch , testevtmasks , testjetmasks = \
 
 for epoch in range(NEPOCHS):
   print("start epoch %02d" % epoch)
+  print()
 
+
+  # TODO
+  # saving checkpoints
+  # if not (epoch % 10):
+  #   checkpoints.save_checkpoint(ckpt_dir=CKPTDIR, target=opt_state, step=epoch//10)
 
   if epoch == 0:
     print("JIT may take some time during the first batch...")
-
-  if not (epoch % 10):
-    checkpoints.save_checkpoint(ckpt_dir=CKPTDIR, target=opt_state, step=epoch//10)
 
   print()
 
@@ -268,11 +273,11 @@ for epoch in range(NEPOCHS):
 
   outs = numpy.exp(forward(opt_state.params, testbatch, testevtmasks, testjetmasks))
 
-  valiplot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
+  validplot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
 
   outs = numpy.exp(forward(opt_state.params, validbatch, validevtmasks, validjetmasks))
 
-  valiplot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
+  validplot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
 
   k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))

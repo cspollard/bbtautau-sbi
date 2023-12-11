@@ -1,5 +1,7 @@
 TODOs
 -----
+- need the reweight function to take also the _weights_ as inputs for kL
+  reweighting!
 - implement normalizing flows
 - uncertainty on e.g. sumET in top?
 - jES/jER and uncertainties
