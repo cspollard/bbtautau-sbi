@@ -20,14 +20,14 @@ from validplots import validplot
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 64
+MAXEVTS = 32
 
 NNODES = 32
 NEPOCHS = 50
 NBATCHES = 256
 BATCHSIZE = 64
-LR = 1e-3
-MAXMU = 10
+LR = 1e-4
+MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
@@ -39,7 +39,7 @@ NVALIDBATCHES = 1024
 CKPTDIR = './checkpoints'
 
 # luminosity in 1/fb
-LUMI = 100
+LUMI = 10
 
 bkgs = [ "top" , "ZH" , "higgs" , "DYbb" ]
 sigs = [ "HH" ]
@@ -107,6 +107,11 @@ def select(samp):
 
   bjets = jets[:,:,0] == 1
   taus = jets[:,:,2] == 1
+
+  scale = repeat(mask , "e j -> e j x", x=3) * 0.05
+
+  # normalize to 20 GeV
+  jets = jets.at[:,:,3:6].set(jets[:,:,3:6] * scale)
 
   # 2 b-jets and 2 taus
   bbtt = \
