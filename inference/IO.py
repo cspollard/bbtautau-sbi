@@ -30,9 +30,6 @@ def readarr(fname, maxjets):
 
   mask = numpy.any(jets != 999, axis=2)
 
-  # divide momenta by 20 GeV (just a good normalization guess)
-  jets[:,:,2:5] = jets[:,:,3:6] / 20
-
   l = len(mask)
   # TODO
   # only _very nearly_ correct.

@@ -12,7 +12,7 @@ from einops import repeat, rearrange, reduce
 
 from tqdm import tqdm
 
-from mixjax import randompartition, reweight, concat
+from mixjax import randompartition, reweight, concat, mixturedict
 
 from IO import readarr
 from validplots import validplot
@@ -20,26 +20,29 @@ from validplots import validplot
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 350
+MAXEVTS = 64
 
-NNODES = 64
+NNODES = 32
 NEPOCHS = 50
-NBATCHES = 512
-BATCHSIZE = 32
-LR = 3e-4
+NBATCHES = 256
+BATCHSIZE = 64
+LR = 1e-3
 MAXMU = 10
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
 
 # how many datasets in the valid sample
-NVALIDBATCHES = 128 # 2048
+NVALIDBATCHES = 1024
 
 # checkpoints
 CKPTDIR = './checkpoints'
 
 # luminosity in 1/fb
-LUMI = 350
+LUMI = 100
+
+bkgs = [ "top" , "ZH" , "higgs" , "DYbb" ]
+sigs = [ "HH" ]
 
 
 # some useful aliases
@@ -98,19 +101,41 @@ def forward(params, inputs, evtmasks, jetmasks):
   return inference.apply(params["inference"], summed)
 
 
+def select(samp):
+  jets = samp.allsamples()["events"]
+  mask = samp.allsamples()["jetmasks"]
+
+  bjets = jets[:,:,0] == 1
+  taus = jets[:,:,2] == 1
+
+  # 2 b-jets and 2 taus
+  bbtt = \
+    numpy.logical_and \
+    ( reduce( bjets , "e j -> e" , "sum" ) == 2
+    , reduce( taus ,  "e j -> e" , "sum" ) == 2
+    )
+
+  return \
+    mixturedict \
+    ( {"events" : jets[bbtt], "jetmasks" : mask[bbtt]}
+    , samp.weights[bbtt]
+    )
+
+
 allsamples = \
   { k : \
       randompartition \
       ( key(0)
-      , readarr(k + ".csv", maxjets=MAXJETS)
+      , select(readarr(k + ".csv", maxjets=MAXJETS))
       , VALIDFRAC
       , compensate=True
       )
-    for k in [ "top" , "ZH" , "higgs" , "HH" , "DYbb" ]
+    for k in bkgs + sigs
   }
 
 validsamps = { k : m[0] for k , m in allsamples.items() }
 trainsamps = { k : m[1] for k , m in allsamples.items() }
+
 
 print("done reading in samples")
 print()
@@ -168,7 +193,7 @@ def prior(knext, b):
   nps = []
   for i in range(b):
     d = {}
-    for p in [ "top" , "ZH" , "higgs" ]:
+    for p in bkgs:
       k , knext = split(knext)
       d[p] = relu(1 + 0.6 * random.normal(k, shape=(1,)))
 

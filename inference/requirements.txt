@@ -1,4 +1,5 @@
 matplotlib
+tensorflow
 flax
 optax
 einops
