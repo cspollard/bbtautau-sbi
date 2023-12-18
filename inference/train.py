@@ -20,13 +20,14 @@ from validplots import validplot
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 32
+MAXEVTS = 2048
 
-NNODES = 32
+NNODES = 64
+NLAYERS = 4
 NEPOCHS = 50
 NBATCHES = 256
-BATCHSIZE = 64
-LR = 1e-4
+BATCHSIZE = 16
+LR = 1e-3
 MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
@@ -38,8 +39,8 @@ NVALIDBATCHES = 1024
 # checkpoints
 CKPTDIR = './checkpoints'
 
-# luminosity in 1/fb
-LUMI = 10
+# luminosity in 1/pb
+LUMI = 10e3
 
 bkgs = [ "top" , "ZH" , "higgs" , "DYbb" ]
 sigs = [ "HH" ]
@@ -63,9 +64,9 @@ def MLP(features, activations):
   return Sequential([x for pair in laypairs for x in pair])
 
 
-perjet = MLP([NNODES]*6 , [relu]*5 + [softmax])
-perevt = MLP([NNODES]*6 , [relu]*5 + [softmax])
-inference = MLP([NNODES]*6 + [2] , [relu]*6 + [id])
+perjet = MLP([NNODES]*NLAYERS , [relu]*(NLAYERS-1) + [softmax])
+perevt = MLP([NNODES]*NLAYERS , [relu]*(NLAYERS-1) + [softmax])
+inference = MLP([NNODES]*NLAYERS + [2] , [relu]*NLAYERS + [id])
 
 
 params = \
@@ -101,29 +102,71 @@ def forward(params, inputs, evtmasks, jetmasks):
   return inference.apply(params["inference"], summed)
 
 
+def minv(p3, mask=None):
+  if mask is not None:
+    mask = repeat(mask, "e p -> e p x", x=3)
+    p3 = p3 * mask
+
+
+  E = numpy.sqrt(reduce(p3 * p3, "e p x -> e p", "sum"))
+  Etot = reduce(E, "e p -> e", "sum")
+  ptot = reduce(p3, "e p x -> e x", "sum")
+  m2 = Etot * Etot - reduce(ptot * ptot, "e x -> e", "sum")
+
+  return numpy.sqrt(m2)
+
+
+def ands(bools):
+  ret = bools[0]
+  for i in range(1, len(bools)):
+    ret = numpy.logical_and(ret, bools[i])
+
+  return ret
+
+
 def select(samp):
   jets = samp.allsamples()["events"]
   mask = samp.allsamples()["jetmasks"]
 
-  bjets = jets[:,:,0] == 1
-  taus = jets[:,:,2] == 1
+  bjets = ands([mask , jets[:,:,0] == 1])
+  taus = ands([mask , jets[:,:,2] == 1 , numpy.logical_not(bjets)])
 
-  scale = repeat(mask , "e j -> e j x", x=3) * 0.05
 
-  # normalize to 20 GeV
-  jets = jets.at[:,:,3:6].set(jets[:,:,3:6] * scale)
+  # scale = repeat(mask , "e j -> e j x", x=3) * 0.05
+
+  # # normalize to 20 GeV
+  # jets = jets.at[:,:,3:6].set(jets[:,:,3:6] * scale)
 
   # 2 b-jets and 2 taus
-  bbtt = \
+  sel = \
     numpy.logical_and \
     ( reduce( bjets , "e j -> e" , "sum" ) == 2
     , reduce( taus ,  "e j -> e" , "sum" ) == 2
     )
 
+  # how to get just the taus and bjets now that we have their indices?
+  jets = jets[sel]
+  taus = taus[sel]
+  bjets = bjets[sel]
+  btau = numpy.logical_or(bjets, taus)
+  mask = mask[sel]
+  weights = samp.weights[sel]
+
+  highmass = minv(jets[:,:,3:], ands([mask , btau])) > 200
+  bmass = minv(jets[:,:,3:], ands([mask , bjets]))
+  taumass = minv(jets[:,:,3:], ands([mask , taus]))
+
+  sel = ands([highmass, bmass > 75, bmass < 150, taumass > 50, taumass < 125])
+
+  # how to get just the taus and bjets now that we have their indices?
+  jets = jets[sel]
+  mask = mask[sel]
+  weights = weights[sel]
+
   return \
     mixturedict \
-    ( {"events" : jets[bbtt], "jetmasks" : mask[bbtt]}
-    , samp.weights[bbtt]
+    ( {"events" : jets, "jetmasks" : mask}
+    , weights
     )
 
 
@@ -137,6 +180,7 @@ allsamples = \
       )
     for k in bkgs + sigs
   }
+
 
 validsamps = { k : m[0] for k , m in allsamples.items() }
 trainsamps = { k : m[1] for k , m in allsamples.items() }
@@ -160,8 +204,13 @@ def generate(knext, pois, nps, samps):
 
     procs.append(tmp)
 
+    print(prock)
+    print(reduce(tmp.weights, "e w -> w", "sum"))
+
   tmp = concat(procs)
   tmp.weights = tmp.weights[:,0]
+
+  print(numpy.sum(tmp.weights))
 
   return tmp.sample(knext, MAXEVTS)
 
@@ -183,10 +232,19 @@ def buildbatch(knext, pois, nps, samps):
   evtmasks = []
   for i in range(nbatch):
     k , knext = split(knext)
+    print("hh mu:")
+    print(pois[i])
+    print()
+    print("nps:")
+    print(nps[i])
+    print()
     batch , masks = generate(k, pois[i], nps[i], samps)
+    print()
     batches.append(batch["events"])
     jetmasks.append(batch["jetmasks"])
     evtmasks.append(masks)
+    if i > 5:
+      break
 
   return stack(batches) , stack(evtmasks) , stack(jetmasks)
 
@@ -200,7 +258,7 @@ def prior(knext, b):
     d = {}
     for p in bkgs:
       k , knext = split(knext)
-      d[p] = relu(1 + 0.6 * random.normal(k, shape=(1,)))
+      d[p] = relu(1 + 0.3 * random.normal(k, shape=(1,)))
 
     nps.append(d)
 
@@ -262,7 +320,6 @@ validpois , validnps = prior(k, NVALIDBATCHES)
 k , knext = split(knext)
 validbatch , validevtmasks , validjetmasks = \
   buildbatch(k, validpois, validnps, validsamps)
-
 
 print("building test sample")
 print()
