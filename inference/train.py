@@ -20,15 +20,15 @@ from validplots import validplot
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 2048
+MAXEVTS = 256
 
-NNODES = 64
-NLAYERS = 4
-NEPOCHS = 50
+NNODES = 32
+NLAYERS = 6
+NEPOCHS = 500
 NBATCHES = 256
-BATCHSIZE = 16
-LR = 1e-3
-MAXMU = 5
+BATCHSIZE = 32
+LR = 3e-4
+MAXMU = 500
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
@@ -40,7 +40,7 @@ NVALIDBATCHES = 1024
 CKPTDIR = './checkpoints'
 
 # luminosity in 1/pb
-LUMI = 10e3
+LUMI = 1e3
 
 bkgs = [ "top" , "ZH" , "higgs" , "DYbb" ]
 sigs = [ "HH" ]
@@ -204,13 +204,9 @@ def generate(knext, pois, nps, samps):
 
     procs.append(tmp)
 
-    print(prock)
-    print(reduce(tmp.weights, "e w -> w", "sum"))
-
   tmp = concat(procs)
   tmp.weights = tmp.weights[:,0]
-
-  print(numpy.sum(tmp.weights))
+  # print(numpy.sum(tmp.weights))
 
   return tmp.sample(knext, MAXEVTS)
 
@@ -232,19 +228,10 @@ def buildbatch(knext, pois, nps, samps):
   evtmasks = []
   for i in range(nbatch):
     k , knext = split(knext)
-    print("hh mu:")
-    print(pois[i])
-    print()
-    print("nps:")
-    print(nps[i])
-    print()
     batch , masks = generate(k, pois[i], nps[i], samps)
-    print()
     batches.append(batch["events"])
     jetmasks.append(batch["jetmasks"])
     evtmasks.append(masks)
-    if i > 5:
-      break
 
   return stack(batches) , stack(evtmasks) , stack(jetmasks)
 
@@ -258,7 +245,7 @@ def prior(knext, b):
     d = {}
     for p in bkgs:
       k , knext = split(knext)
-      d[p] = relu(1 + 0.3 * random.normal(k, shape=(1,)))
+      d[p] = relu(1 + 0.00005 * random.normal(k, shape=(1,)))
 
     nps.append(d)
 

@@ -25,16 +25,16 @@ def readarr(fname, maxjets):
     , axis=1
     )
 
-  # TODO is this correct?
   jets = awkward.to_regular(jets).to_numpy().astype(numpy.float32)
 
   mask = numpy.any(jets != 999, axis=2)
 
-  l = len(mask)
   # TODO
   # only _very nearly_ correct.
-  weights = wgts / l
-  weights = awkward.to_regular(weights).to_numpy().astype(numpy.float32)
+  weights = awkward.to_regular(wgts).to_numpy().astype(numpy.float32)
+
+  l = weights.shape[0]
+  weights = weights / l
   if weights.shape[1] != 3:
     weights = einops.repeat(weights, "e w -> e (3 w)")
 
