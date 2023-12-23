@@ -20,15 +20,20 @@ from validplots import validplot
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 256
+MAXEVTS = 2048
 
-NNODES = 32
-NLAYERS = 6
+NJETNODES = 16
+NJETLAYERS = 4
+NEVENTNODES = 64
+NEVENTLAYERS = 6
+NINFNODES = 64
+NINFLAYERS = 6
+
 NEPOCHS = 500
 NBATCHES = 256
 BATCHSIZE = 32
 LR = 3e-4
-MAXMU = 500
+MAXMU = 50
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
@@ -40,7 +45,7 @@ NVALIDBATCHES = 1024
 CKPTDIR = './checkpoints'
 
 # luminosity in 1/pb
-LUMI = 1e3
+LUMI = 10e3
 
 bkgs = [ "top" , "ZH" , "higgs" , "DYbb" ]
 sigs = [ "HH" ]
@@ -64,15 +69,15 @@ def MLP(features, activations):
   return Sequential([x for pair in laypairs for x in pair])
 
 
-perjet = MLP([NNODES]*NLAYERS , [relu]*(NLAYERS-1) + [softmax])
-perevt = MLP([NNODES]*NLAYERS , [relu]*(NLAYERS-1) + [softmax])
-inference = MLP([NNODES]*NLAYERS + [2] , [relu]*NLAYERS + [id])
+perjet = MLP([NJETNODES]*NJETLAYERS , [relu]*(NJETLAYERS-1) + [softmax])
+perevt = MLP([NEVENTNODES]*NEVENTLAYERS , [relu]*(NEVENTLAYERS-1) + [softmax])
+inference = MLP([NINFNODES]*NINFLAYERS + [2] , [relu]*NINFLAYERS + [id])
 
 
 params = \
   { "perjet" : perjet.init(key(0), numpy.ones((1, 6)))
-  , "perevt" : perevt.init(key(0), numpy.ones((1, NNODES)))
-  , "inference" : inference.init(key(1), numpy.ones((1, NNODES)))
+  , "perevt" : perevt.init(key(0), numpy.ones((1, NJETNODES)))
+  , "inference" : inference.init(key(1), numpy.ones((1, NEVENTNODES)))
   }
 
 
