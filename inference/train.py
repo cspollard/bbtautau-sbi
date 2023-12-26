@@ -197,7 +197,6 @@ print(reweight(lambda x: MAXMU, trainsamps["HH"]).weights[:,0].sum())
 print()
 print("nominal background rate:")
 print(concat([trainsamps[k] for k in bkgs]).weights[:,0].sum())
-exit()
 
 
 # pois: HH mu
@@ -215,6 +214,8 @@ def generate(knext, pois, nps, samps):
     procs.append(tmp)
 
   tmp = concat(procs)
+  # TODO: kappa lambda weights
+  tmp.weights = tmp.weights[:,0]
 
   return tmp.sample(knext, MAXEVTS)
 
