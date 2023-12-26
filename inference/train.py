@@ -22,18 +22,18 @@ MAXJETS = 8
 # how many evts / dataset
 MAXEVTS = 2048
 
-NJETNODES = 16
-NJETLAYERS = 4
+NJETNODES = 32
+NJETLAYERS = 6
 NEVENTNODES = 64
 NEVENTLAYERS = 6
 NINFNODES = 64
-NINFLAYERS = 6
+NINFLAYERS = 4
 
 NEPOCHS = 500
 NBATCHES = 256
-BATCHSIZE = 32
-LR = 3e-4
-MAXMU = 50
+BATCHSIZE = 64
+LR = 1e-3
+MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
@@ -285,7 +285,7 @@ def step(opt_state, batch, evtmasks, jetmasks, pois):
 
   return new_opt_state , loss_value
 
-####################3
+####################
 
 sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
 optimizer = optax.adam(learning_rate=sched)
