@@ -11,6 +11,8 @@ TODOs
 - fake taus and b-jets
 - train discriminant + binned likelihood fit (or marginalize?)
 - kL vs xsec posteriors
+- add discriminator loss component that decays to zero after many steps (to help
+  with convergence)
 
 Things to check
 ---------------

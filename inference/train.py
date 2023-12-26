@@ -20,18 +20,18 @@ from validplots import validplot
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 2048
+MAXEVTS = 52000
 
-NJETNODES = 32
+NJETNODES = 16
 NJETLAYERS = 6
-NEVENTNODES = 64
-NEVENTLAYERS = 6
-NINFNODES = 64
+NEVENTNODES = 32
+NEVENTLAYERS = 4
+NINFNODES = 32
 NINFLAYERS = 4
 
-NEPOCHS = 500
+NEPOCHS = 50
 NBATCHES = 256
-BATCHSIZE = 64
+BATCHSIZE = 16
 LR = 1e-3
 MAXMU = 5
 
@@ -39,13 +39,13 @@ MAXMU = 5
 VALIDFRAC = 0.3
 
 # how many datasets in the valid sample
-NVALIDBATCHES = 1024
+NVALIDBATCHES = 512
 
 # checkpoints
 CKPTDIR = './checkpoints'
 
 # luminosity in 1/pb
-LUMI = 10e3
+LUMI = 300e3
 
 bkgs = [ "top" , "ZH" , "higgs" , "DYbb" ]
 sigs = [ "HH" ]
@@ -171,7 +171,7 @@ def select(samp):
   return \
     mixturedict \
     ( {"events" : jets, "jetmasks" : mask}
-    , weights
+    , LUMI * weights
     )
 
 
@@ -186,13 +186,18 @@ allsamples = \
     for k in bkgs + sigs
   }
 
-
 validsamps = { k : m[0] for k , m in allsamples.items() }
 trainsamps = { k : m[1] for k , m in allsamples.items() }
 
-
 print("done reading in samples")
 print()
+
+print("max signal rate:")
+print(reweight(lambda x: MAXMU, trainsamps["HH"]).weights[:,0].sum())
+print()
+print("nominal background rate:")
+print(concat([trainsamps[k] for k in bkgs]).weights[:,0].sum())
+exit()
 
 
 # pois: HH mu
@@ -203,15 +208,13 @@ def generate(knext, pois, nps, samps):
     tmp = samps[prock]
 
     if prock in nps:
-      tmp = reweight(lambda x: LUMI*nps[prock], tmp)
+      tmp = reweight(lambda x: nps[prock], tmp)
     if prock == "HH":
-      tmp = reweight(lambda x: LUMI*pois, tmp)
+      tmp = reweight(lambda x: pois, tmp)
 
     procs.append(tmp)
 
   tmp = concat(procs)
-  tmp.weights = tmp.weights[:,0]
-  # print(numpy.sum(tmp.weights))
 
   return tmp.sample(knext, MAXEVTS)
 
@@ -322,7 +325,6 @@ testpois , testnps = prior(k, NVALIDBATCHES)
 k , knext = split(knext)
 testbatch , testevtmasks , testjetmasks = \
   buildbatch(k, testpois, testnps, trainsamps)
-
 
 
 for epoch in range(NEPOCHS):
