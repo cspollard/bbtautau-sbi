@@ -20,32 +20,32 @@ from validplots import validplot
 # how many jets / evt
 MAXJETS = 8
 # how many evts / dataset
-MAXEVTS = 52000
+MAXEVTS = 17000
 
 NJETNODES = 16
-NJETLAYERS = 6
+NJETLAYERS = 4
 NEVENTNODES = 32
-NEVENTLAYERS = 4
+NEVENTLAYERS = 8
 NINFNODES = 32
-NINFLAYERS = 4
+NINFLAYERS = 8
 
-NEPOCHS = 50
-NBATCHES = 256
+NEPOCHS = 500
+NBATCHES = 512
 BATCHSIZE = 16
-LR = 1e-3
+LR = 1e-4
 MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
 
 # how many datasets in the valid sample
-NVALIDBATCHES = 512
+NVALIDBATCHES = 128
 
 # checkpoints
 CKPTDIR = './checkpoints'
 
 # luminosity in 1/pb
-LUMI = 300e3
+LUMI = 100e3
 
 bkgs = [ "top" , "ZH" , "higgs" , "DYbb" ]
 sigs = [ "HH" ]
@@ -136,12 +136,6 @@ def select(samp):
   bjets = ands([mask , jets[:,:,0] == 1])
   taus = ands([mask , jets[:,:,2] == 1 , numpy.logical_not(bjets)])
 
-
-  # scale = repeat(mask , "e j -> e j x", x=3) * 0.05
-
-  # # normalize to 20 GeV
-  # jets = jets.at[:,:,3:6].set(jets[:,:,3:6] * scale)
-
   # 2 b-jets and 2 taus
   sel = \
     numpy.logical_and \
@@ -167,6 +161,11 @@ def select(samp):
   jets = jets[sel]
   mask = mask[sel]
   weights = weights[sel]
+
+  # normalize to 25 GeV (just a good guess)
+  scale = repeat(mask , "e j -> e j x", x=3) * 0.04
+  jets = jets.at[:,:,3:6].set(jets[:,:,3:6] * scale)
+
 
   return \
     mixturedict \
