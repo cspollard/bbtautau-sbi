@@ -32,7 +32,7 @@ NINFLAYERS = 8
 NEPOCHS = 100
 NBATCHES = 256
 BATCHSIZE = 32
-LR = 1e-3
+LR = 1e-4
 MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
@@ -76,7 +76,8 @@ def forward(params, inputs, evtmasks, jetmasks):
 
   flattened = rearrange(inputs, "b e j f -> (b e j) f")
   unflattened = perjet.apply(params["perjet"], flattened)
-  unflattened = rearrange(unflattened, "(b e j) f -> b e j f", b=batchsize, e=nevt)
+  unflattened = \
+    rearrange(unflattened, "(b e j) f -> b e j f", b=batchsize, e=nevt)
 
   expandedjetmasks = \
     repeat(jetmasks, "b e j -> b e j f", f=unflattened.shape[3])
@@ -99,7 +100,6 @@ def minv(p3, mask=None):
   if mask is not None:
     mask = repeat(mask, "e p -> e p x", x=3)
     p3 = p3 * mask
-
 
   E = numpy.sqrt(reduce(p3 * p3, "e p x -> e p", "sum"))
   Etot = reduce(E, "e p -> e", "sum")
