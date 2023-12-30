@@ -30,9 +30,9 @@ NINFNODES = 32
 NINFLAYERS = 8
 
 NEPOCHS = 100
-NBATCHES = 256
-BATCHSIZE = 32
-LR = 1e-4
+NBATCHES = 128
+BATCHSIZE = 64
+LR = 3e-5
 MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
@@ -301,15 +301,15 @@ k , knext = split(knext)
 validbatch , validevtmasks , validjetmasks = \
   buildbatch(k, validpois, validnps, validsamps)
 
-print("building test sample")
-print()
+# print("building test sample")
+# print()
 
-k , knext = split(knext)
-testpois , testnps = prior(k, NVALIDBATCHES)
+# k , knext = split(knext)
+# testpois , testnps = prior(k, NVALIDBATCHES)
 
-k , knext = split(knext)
-testbatch , testevtmasks , testjetmasks = \
-  buildbatch(k, testpois, testnps, trainsamps)
+# k , knext = split(knext)
+# testbatch , testevtmasks , testjetmasks = \
+#   buildbatch(k, testpois, testnps, trainsamps)
 
 
 print("building MLPs")
@@ -353,8 +353,8 @@ for epoch in range(NEPOCHS):
 
   if epoch == 0:
     print("JIT may take some time during the first batch...")
+    print()
 
-  print()
 
   print("current LR:", sched(opt_state.step))
   print()
@@ -369,17 +369,21 @@ for epoch in range(NEPOCHS):
       step(opt_state, batch, evtmasks, jetmasks, pois)
 
 
+  # outs = numpy.exp(forward(opt_state.params, testbatch, testevtmasks, testjetmasks))
 
-  outs = numpy.exp(forward(opt_state.params, testbatch, testevtmasks, testjetmasks))
+  # validplot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
 
-  validplot("figs/test-%02d" % epoch, testpois, outs, numpy.mgrid[0:MAXMU:25j])
+  outs = forward(opt_state.params, validbatch, validevtmasks, validjetmasks)
 
-  outs = numpy.exp(forward(opt_state.params, validbatch, validevtmasks, validjetmasks))
+  meanloss = loss(outs, validpois)
+  outs = numpy.exp(outs)
 
   validplot("figs/valid-%02d" % epoch, validpois, outs, numpy.mgrid[0:MAXMU:25j])
 
   k, knext = split(knext)
   idxs = random.choice(k, numpy.arange(NVALIDBATCHES), shape=(5,))
+
+  print()
 
   diff = outs[:,0] - validpois
   pull = diff / outs[:,1]
@@ -403,6 +407,10 @@ for epoch in range(NEPOCHS):
   print()
   print("end epoch %02d" % epoch)
   print()
+  print("mean loss:")
+  print(meanloss)
+  print()
+
 
 print()
 print("end of training")
