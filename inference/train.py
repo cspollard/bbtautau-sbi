@@ -25,14 +25,14 @@ MAXEVTS = 17000
 NJETNODES = 16
 NJETLAYERS = 4
 NEVENTNODES = 32
-NEVENTLAYERS = 8
+NEVENTLAYERS = 6
 NINFNODES = 32
 NINFLAYERS = 8
 
-NEPOCHS = 200
+NEPOCHS = 100
 NBATCHES = 256
 BATCHSIZE = 32
-LR = 3e-4
+LR = 1e-3
 MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
@@ -130,6 +130,7 @@ def ands(bools):
 
 
 def select(samp):
+
   jets = samp.allsamples()["events"]
   mask = samp.allsamples()["jetmasks"]
 
@@ -143,7 +144,6 @@ def select(samp):
     , reduce( taus ,  "e j -> e" , "sum" ) == 2
     )
 
-  # how to get just the taus and bjets now that we have their indices?
   jets = jets[sel]
   taus = taus[sel]
   bjets = bjets[sel]
@@ -151,13 +151,20 @@ def select(samp):
   mask = mask[sel]
   weights = samp.weights[sel]
 
-  highmass = minv(jets[:,:,3:], ands([mask , btau])) > 200
+  bbttmass = minv(jets[:,:,3:], ands([mask , btau]))
   bmass = minv(jets[:,:,3:], ands([mask , bjets]))
   taumass = minv(jets[:,:,3:], ands([mask , taus]))
 
-  sel = ands([highmass, bmass > 75, bmass < 150, taumass > 50, taumass < 125])
+  sel = \
+    ands \
+    ( [ bbttmass > 200
+      , bmass > 75
+      , bmass < 150
+      , taumass > 50
+      , taumass < 125
+      ]
+    )
 
-  # how to get just the taus and bjets now that we have their indices?
   jets = jets[sel]
   mask = mask[sel]
   weights = weights[sel]
@@ -165,7 +172,6 @@ def select(samp):
   # normalize to 25 GeV (just a good guess)
   scale = repeat(mask , "e j -> e j x", x=3) * 0.04
   jets = jets.at[:,:,3:6].set(jets[:,:,3:6] * scale)
-
 
   return \
     mixturedict \
@@ -341,6 +347,9 @@ for epoch in range(NEPOCHS):
 
   print()
 
+  print("current LR:", sched(opt_state.step))
+  print()
+
   for _ in tqdm(range(NBATCHES)):
     k, knext = split(knext)
     pois , nps = prior(k, BATCHSIZE)
@@ -349,6 +358,7 @@ for epoch in range(NEPOCHS):
 
     opt_state, loss_value = \
       step(opt_state, batch, evtmasks, jetmasks, pois)
+
 
 
   outs = numpy.exp(forward(opt_state.params, testbatch, testevtmasks, testjetmasks))
@@ -389,16 +399,16 @@ print()
 print("end of training")
 print()
 print("nevt, pois, and outputs + uncertainties")
-print(reduce(validevtmasks, "b e -> b", "sum"))
-print(validpois)
-print(outs[:,0])
-print(outs[:,1])
+print(reduce(validevtmasks[:20], "b e -> b", "sum"))
+print(validpois[:20])
+print(outs[:20,0])
+print(outs[:20,1])
 print()
 print("sample diffs")
-print(diff)
+print(diff[:20])
 print()
 print("sample pulls")
-print(pull)
+print(pull[:20])
 print()
 
 # checkpoints.save_checkpoint(ckpt_dir=CKPTDIR, target=opt_state, step=0)
