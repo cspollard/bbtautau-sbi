@@ -29,17 +29,17 @@ NEVENTLAYERS = 8
 NINFNODES = 32
 NINFLAYERS = 8
 
-NEPOCHS = 500
-NBATCHES = 512
-BATCHSIZE = 16
-LR = 1e-4
+NEPOCHS = 200
+NBATCHES = 256
+BATCHSIZE = 32
+LR = 3e-4
 MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
 VALIDFRAC = 0.3
 
 # how many datasets in the valid sample
-NVALIDBATCHES = 128
+NVALIDBATCHES = 512
 
 # checkpoints
 CKPTDIR = './checkpoints'
@@ -335,7 +335,6 @@ for epoch in range(NEPOCHS):
   # TODO
   # saving checkpoints
   # if not (epoch % 10):
-  #   checkpoints.save_checkpoint(ckpt_dir=CKPTDIR, target=opt_state, step=epoch//10)
 
   if epoch == 0:
     print("JIT may take some time during the first batch...")
@@ -401,3 +400,5 @@ print()
 print("sample pulls")
 print(pull)
 print()
+
+# checkpoints.save_checkpoint(ckpt_dir=CKPTDIR, target=opt_state, step=0)
