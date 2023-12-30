@@ -69,18 +69,6 @@ def MLP(features, activations):
   return Sequential([x for pair in laypairs for x in pair])
 
 
-perjet = MLP([NJETNODES]*NJETLAYERS , [relu]*(NJETLAYERS-1) + [softmax])
-perevt = MLP([NEVENTNODES]*NEVENTLAYERS , [relu]*(NEVENTLAYERS-1) + [softmax])
-inference = MLP([NINFNODES]*NINFLAYERS + [2] , [relu]*NINFLAYERS + [id])
-
-
-params = \
-  { "perjet" : perjet.init(key(0), numpy.ones((1, 6)))
-  , "perevt" : perevt.init(key(0), numpy.ones((1, NJETNODES)))
-  , "inference" : inference.init(key(1), numpy.ones((1, NEVENTNODES)))
-  }
-
-
 @jax.jit
 def forward(params, inputs, evtmasks, jetmasks):
   batchsize = inputs.shape[0]
@@ -180,30 +168,6 @@ def select(samp):
     )
 
 
-allsamples = \
-  { k : \
-      randompartition \
-      ( key(0)
-      , select(readarr(k + ".csv", maxjets=MAXJETS))
-      , VALIDFRAC
-      , compensate=True
-      )
-    for k in bkgs + sigs
-  }
-
-validsamps = { k : m[0] for k , m in allsamples.items() }
-trainsamps = { k : m[1] for k , m in allsamples.items() }
-
-print("done reading in samples")
-print()
-
-print("max signal rate:")
-print(reweight(lambda x: MAXMU, trainsamps["HH"]).weights[:,0].sum())
-print()
-print("nominal background rate:")
-print(concat([trainsamps[k] for k in bkgs]).weights[:,0].sum())
-
-
 # pois: HH mu
 # nps: mu for different bkgs
 def generate(knext, pois, nps, samps):
@@ -296,18 +260,33 @@ def step(opt_state, batch, evtmasks, jetmasks, pois):
 
 ####################
 
-sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
-optimizer = optax.adam(learning_rate=sched)
 
-print("setting up training state")
+print("reading in samples")
 print()
 
-opt_state = \
-  train_state.TrainState.create \
-  ( apply_fn=forward
-  , params=params
-  , tx=optimizer
-  )
+allsamples = \
+  { k : \
+      randompartition \
+      ( key(0)
+      , select(readarr(k + ".csv", maxjets=MAXJETS))
+      , VALIDFRAC
+      , compensate=True
+      )
+    for k in bkgs + sigs
+  }
+
+validsamps = { k : m[0] for k , m in allsamples.items() }
+trainsamps = { k : m[1] for k , m in allsamples.items() }
+
+print("done reading in samples")
+print()
+
+print("max signal rate:")
+print(reweight(lambda x: MAXMU, trainsamps["HH"]).weights[:,0].sum())
+print()
+print("nominal background rate:")
+print(concat([trainsamps[k] for k in bkgs]).weights[:,0].sum())
+print()
 
 
 print("building validation sample")
@@ -332,6 +311,36 @@ k , knext = split(knext)
 testbatch , testevtmasks , testjetmasks = \
   buildbatch(k, testpois, testnps, trainsamps)
 
+
+print("building MLPs")
+print()
+perjet = MLP([NJETNODES]*NJETLAYERS , [relu]*(NJETLAYERS-1) + [softmax])
+perevt = MLP([NEVENTNODES]*NEVENTLAYERS , [relu]*(NEVENTLAYERS-1) + [softmax])
+inference = MLP([NINFNODES]*NINFLAYERS + [2] , [relu]*NINFLAYERS + [id])
+
+
+params = \
+  { "perjet" : perjet.init(key(0), numpy.ones((1, 6)))
+  , "perevt" : perevt.init(key(0), numpy.ones((1, NJETNODES)))
+  , "inference" : inference.init(key(1), numpy.ones((1, NEVENTNODES)))
+  }
+
+
+print("done building MLPs")
+print()
+
+sched = optax.cosine_decay_schedule(LR , NEPOCHS*NBATCHES)
+optimizer = optax.adam(learning_rate=sched)
+
+print("setting up training state")
+print()
+
+opt_state = \
+  train_state.TrainState.create \
+  ( apply_fn=forward
+  , params=params
+  , tx=optimizer
+  )
 
 for epoch in range(NEPOCHS):
   print("start epoch %02d" % epoch)
