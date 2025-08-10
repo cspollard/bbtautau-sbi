@@ -22,17 +22,17 @@ MAXJETS = 8
 # how many evts / dataset
 MAXEVTS = 17000
 
-NJETNODES = 16
-NJETLAYERS = 4
-NEVENTNODES = 32
-NEVENTLAYERS = 6
-NINFNODES = 32
+NJETNODES = 32
+NJETLAYERS = 3
+NEVENTNODES = 64
+NEVENTLAYERS = 4
+NINFNODES = 64
 NINFLAYERS = 8
 
 NEPOCHS = 100
 NBATCHES = 128
 BATCHSIZE = 64
-LR = 3e-5
+LR = 3e-4
 MAXMU = 5
 
 # how many MC events should be allocated for the validation sample
