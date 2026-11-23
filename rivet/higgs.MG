@@ -1,5 +1,5 @@
 set nb_core 4
-generate p p > h b b~ , h > ta+ ta- / z
+generate p p > h b b~ / z , h > ta+ ta-
 output higgs
 launch higgs
 set nevents 500000
