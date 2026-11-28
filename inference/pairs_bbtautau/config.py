@@ -137,6 +137,25 @@ class TrainConfig:
 
 
 @dataclass
+class NuisanceConfig:
+    """Set-level nuisance parameter configuration."""
+
+    mode: Literal["stat_only", "norm"] = "stat_only"
+    # Log-normal standard deviations on process normalizations:
+    # Conservative top/DYbb/ZH (~50% -> in-situ extraction) + LHCHWG HH (~6% combined
+    # from NNLO+NNLL QCD scale +2.2/-5.0%, PDF+alpha_s +/-3.0%, m_t scheme +/-2.7%).
+    log_sigmas: dict[str, float] = field(
+        default_factory=lambda: {
+            "top": 0.50,
+            "DYbb": 0.50,
+            "ZH": 0.50,
+            "higgs": 0.20,
+            "HH": 0.06,
+        }
+    )
+
+
+@dataclass
 class PairsConfig:
     """Top-level configuration container."""
 
@@ -144,6 +163,7 @@ class PairsConfig:
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+    nuisance: NuisanceConfig = field(default_factory=NuisanceConfig)
     output_dir: Path = DEFAULT_INFERENCE_DIR / "outputs"
 
     def validate(self) -> None:

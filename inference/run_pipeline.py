@@ -13,6 +13,7 @@ from pairs_bbtautau.config import (
     DEFAULT_INFERENCE_DIR,
     DataConfig,
     ModelConfig,
+    NuisanceConfig,
     PairsConfig,
     PriorConfig,
     TrainConfig,
@@ -22,7 +23,11 @@ from pairs_bbtautau.config import (
 from pairs_bbtautau.data import build_splits, load_or_build_process_cache
 from pairs_bbtautau.metrics import evaluate_stage3_model
 from pairs_bbtautau.models import PairsModel
-from pairs_bbtautau.physics import StatOnlyNuisanceModel, UniformPrior2D, compute_hh_weights
+from pairs_bbtautau.physics import (
+    UniformPrior2D,
+    build_nuisance_model,
+    compute_hh_weights,
+)
 from pairs_bbtautau.plotting import (
     plot_calibration_acauc,
     plot_loss_curves,
@@ -106,6 +111,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-stage3-reinit-head", action="store_true")
     p.add_argument("--no-stage3-mc-aug", action="store_true")
 
+    # Nuisance parameters
+    p.add_argument(
+        "--nuisances",
+        choices=["stat_only", "norm"],
+        default="stat_only",
+        help="Set-level nuisance mode: stat_only or log-normal process normalizations (norm).",
+    )
+    p.add_argument("--bkg-norm-sigma", type=float, default=0.50, help="Log-normal sigma for top/DYbb/ZH.")
+    p.add_argument("--hh-norm-sigma", type=float, default=0.06, help="Log-normal sigma for HH (LHCHWG ~6%).")
+
     # Evaluation
     p.add_argument("--eval-samples", type=int, default=1000)
     return p.parse_args()
@@ -158,6 +173,16 @@ def build_config(args: argparse.Namespace) -> PairsConfig:
             stage3_mc_aug=(not args.no_stage3_mc_aug) and (not args.stage2_mc_bootstrap),
             eval_num_samples=args.eval_samples,
         ),
+        nuisance=NuisanceConfig(
+            mode=args.nuisances,
+            log_sigmas={
+                "top": args.bkg_norm_sigma,
+                "DYbb": args.bkg_norm_sigma,
+                "ZH": args.bkg_norm_sigma,
+                "higgs": min(0.20, args.bkg_norm_sigma),
+                "HH": args.hh_norm_sigma,
+            },
+        ),
         output_dir=args.output_dir,
     )
     cfg.validate()
@@ -201,7 +226,8 @@ def main() -> None:
     print_process_summary(processes, splits)
 
     prior = UniformPrior2D(cfg.prior)
-    nuisance_model = StatOnlyNuisanceModel()
+    nuisance_model = build_nuisance_model(cfg.nuisance)
+    print(f"Nuisance mode: {cfg.nuisance.mode}" + (f" ({cfg.nuisance.log_sigmas})" if cfg.nuisance.mode != "stat_only" else ""))
     fig_dir = cfg.output_dir / "figs"
     fig_dir.mkdir(parents=True, exist_ok=True)
     plot_yields_vs_kl(processes, cfg.prior, fig_dir)

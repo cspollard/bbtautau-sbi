@@ -489,3 +489,41 @@ def test_mc_bootstrap_exact_variance() -> None:
     emp_var = float(agg["N"].var())
     assert abs(emp_mean - lam) / lam < 0.05
     assert abs(emp_var - expected_var) / expected_var < 0.12
+
+
+def test_lognormal_nuisance_model_and_sampling() -> None:
+    """Verify LogNormalNormNuisanceModel increases dataset count variance as expected."""
+    from pairs_bbtautau.config import NuisanceConfig
+    from pairs_bbtautau.physics import build_nuisance_model
+
+    rng = np.random.default_rng(321)
+    n_mc = 40
+    raw_jets = np.zeros((n_mc, 6, 6), dtype=np.float32)
+    jmask = np.ones((n_mc, 6), dtype=bool)
+    invs = np.zeros((n_mc, 16), dtype=np.float32)
+    procs = {
+        "top": ProcessData("top", raw_jets, jmask, invs, np.full((n_mc, 1), 25.0), n_mc, n_mc),
+        "HH": ProcessData("HH", raw_jets, jmask, invs, np.full((n_mc, 3), 0.5), n_mc, n_mc),
+    }
+    splits, _ = build_splits(procs, DataConfig(backgrounds=("top",), signal="HH", lumi_pb_inv=1.0, max_jets=6))
+    nuis = build_nuisance_model(NuisanceConfig(mode="norm", log_sigmas={"top": 0.50, "HH": 0.06}))
+    sampler = ProcessSampler(splits["train_s3"], nuisance_model=nuis)
+    prior = UniformPrior2D(PriorConfig(mu_min=0.0, mu_max=2.0, kl_min=0.0, kl_max=2.0))
+
+    # Check IW Stage 1 sampling with nuisances
+    thetas = prior.sample(64, rng)
+    sizes = np.full(64, 2, dtype=np.int64)
+    psi_s1 = nuis.sample_prior(64, rng)
+    _, _, _, iw = sampler.sample_small_sets_importance_weighted(thetas, sizes, rng, psi=psi_s1)
+    assert iw.shape == (64,) and torch.isfinite(iw).all()
+
+    # Check Stage 2 aggregated counts reflect log-normal variance
+    embs = {
+        "top": np.zeros((splits["train_s3"].processes["top"].num_events, 4), dtype=np.float32),
+        "HH": np.zeros((splits["train_s3"].processes["HH"].num_events, 4), dtype=np.float32),
+    }
+    agg = sampler.sample_aggregated_datasets(
+        embs, prior, n_datasets=1000, rng=rng, fixed_thetas=np.zeros((1000, 2), dtype=np.float32)
+    )
+    # With sigma_top=0.50 and Lambda_top=1000, std(N) >> sqrt(1000) ~ 31.6
+    assert float(agg["N"].std()) > 300.0

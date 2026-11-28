@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .config import PriorConfig
+from .config import NuisanceConfig, PriorConfig
 from .data import SplitDataset
 
 
@@ -136,6 +136,44 @@ class StatOnlyNuisanceModel(NuisanceModel):
 
     def has_shape_nuisances(self) -> bool:
         return False
+
+
+class LogNormalNormNuisanceModel(NuisanceModel):
+    """Log-normal normalization nuisances psi_p = exp(sigma_p * z_p), z_p ~ N(0, 1)."""
+
+    def __init__(self, log_sigmas: dict[str, float]) -> None:
+        self.log_sigmas = {str(k): float(v) for k, v in log_sigmas.items()}
+
+    def sample_prior(self, n_sets: int, rng: np.random.Generator) -> NuisanceSample:
+        values: dict[str, np.ndarray] = {}
+        for pname, sigma in self.log_sigmas.items():
+            if sigma > 0.0:
+                z = rng.normal(0.0, 1.0, size=n_sets)
+                values[pname] = np.exp(sigma * z).astype(np.float64)
+            else:
+                values[pname] = np.ones(n_sets, dtype=np.float64)
+        return NuisanceSample(values=values)
+
+    def process_rate_multiplier(
+        self,
+        process_name: str,
+        psi: dict[str, float] | None,
+    ) -> float:
+        if psi is None or process_name not in psi:
+            return 1.0
+        return float(psi[process_name])
+
+    def has_shape_nuisances(self) -> bool:
+        return False
+
+
+def build_nuisance_model(cfg: NuisanceConfig) -> NuisanceModel:
+    """Instantiate the configured NuisanceModel."""
+    if cfg.mode == "stat_only":
+        return StatOnlyNuisanceModel()
+    if cfg.mode == "norm":
+        return LogNormalNormNuisanceModel(cfg.log_sigmas)
+    raise ValueError(f"Unknown nuisance mode: {cfg.mode}")
 
 
 class ProcessSampler:
