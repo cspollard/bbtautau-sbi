@@ -29,7 +29,7 @@ Training a Deep Set or Transformer posterior estimator end-to-end on $N \sim 16{
   - **RMAE:** `0.1806` ($\mu_{HH}$), `0.0929` ($\kappa_\lambda$)
   - **Calibration (ACAUC, 0 = exact):** `0.0161` (2D HPD), `0.0110` ($\mu_{HH}$ marginal), `0.0115` ($\kappa_\lambda$ marginal)
   - **Expected 95% upper limit on $\mu_{HH} \mid \kappa_\lambda = 1$ ($\mu_{HH}=0$ bkg-only):** **`2.75`** (`[2.45, 3.20]`) at $100\text{ fb}^{-1}$, beating $\sqrt{\mathcal{L}}$-scaled 2026 Run 2+3 limits from ATLAS ([arXiv:2607.26879](https://arxiv.org/abs/2607.26879), `2.4` at $196\text{ fb}^{-1}$ $\to$ `~3.36`) and CMS (`CMS-PAS-HIG-25-008`, `3.9` at $172\text{ fb}^{-1}$ $\to$ `~5.11`).
-  - **Stage 1 Strategy Comparison:** Importance-weighted $N \in \{1, 2\}$ at the physical prior (`Test NLL = 2.62`, `ACAUC = 0.016`, `~4 min` on MPS) outperformed both standard $N \in \{1, 2\}$ with boosted $\mu_{HH} \le 300$ (`Test NLL = 3.19`, `ACAUC = 0.142`) and $N \in \{1, 16\}$ with boosted $\mu_{HH} \le 300$ (`Test NLL = 2.80`, `ACAUC = 0.014`, `~18 min`, `95% UL = 4.90`), and is now the default (`--stage1-iw` with `--stage1-mu-max 0`).
+  - **Stage 1 Strategy Comparison:** Importance-weighted $N \in \{1, 2\}$ at the physical prior (`Test NLL = 2.62`, `ACAUC = 0.016`, `~4 min` on MPS) outperformed standard $N \in \{1, 2\}$ with boosted $\mu_{HH} \le 300$ (`Test NLL = 3.19`, `ACAUC = 0.142`), $N \in \{1, 16\}$ with boosted $\mu_{HH} \le 300$ (`Test NLL = 2.80`, `ACAUC = 0.014`, `~18 min`, `95% UL = 4.90`), and importance-weighted $N \in \{1, 16\}$ at the physical prior (`Test NLL = 3.67`, `ACAUC = 0.188`, degraded by $\prod_{r=1}^{16} p/q_0$ weight variance). Importance-weighted $N \in \{1, 2\}$ is now the default (`--stage1-iw` with `--stage1-mu-max 0`).
 
 ---
 
