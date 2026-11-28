@@ -58,11 +58,9 @@ class SetTransformerJetBlock(nn.Module):
             x: (B_ev, J, D)
             jet_mask: (B_ev, J) bool, True for valid jets.
         """
-        # Guard against all-False rows causing NaN in softmax
-        has_any = jet_mask.any(dim=1)
+        # Guard against all-False rows causing NaN in softmax without GPU->CPU host sync
         safe_mask = jet_mask.clone()
-        if not bool(has_any.all()):
-            safe_mask[~has_any, 0] = True
+        safe_mask[:, 0] = safe_mask[:, 0] | (~jet_mask.any(dim=1))
 
         key_padding_mask = ~safe_mask
         h = self.norm1(x)
@@ -174,12 +172,7 @@ def _rational_quadratic_spline(
         raise ValueError("min_bin_height * num_bins must be <= 1.0")
 
     inside = (inputs >= -tail_bound) & (inputs <= tail_bound)
-    outside = ~inside
-
-    outputs = inputs.clone()
-    logabsdet = torch.zeros_like(inputs)
-    if not bool(inside.any()):
-        return outputs, logabsdet
+    x_clamped = inputs.clamp(-tail_bound, tail_bound)
 
     # Compute normalized widths, heights, and positive interior knot derivatives
     widths = F.softmax(unnorm_widths, dim=-1)
@@ -202,30 +195,23 @@ def _rational_quadratic_spline(
     ones = torch.ones(*interior_d.shape[:-1], 1, dtype=interior_d.dtype, device=interior_d.device)
     derivatives = torch.cat([ones, interior_d, ones], dim=-1)
 
-    x_in = inputs[inside]
-    cw_in = cumwidths[inside]
-    w_in = widths[inside]
-    ch_in = cumheights[inside]
-    h_in = heights[inside]
-    d_in = derivatives[inside]
-
-    knots = ch_in if inverse else cw_in
-    # Bin lookup via comparison sum (works identically on CPU, CUDA, MPS)
-    bin_idx = ((x_in.unsqueeze(-1) >= knots[..., :-1]).sum(dim=-1) - 1).clamp(0, num_bins - 1)
+    knots = cumheights if inverse else cumwidths
+    # Bin lookup via comparison sum (static shapes, no host sync on MPS)
+    bin_idx = ((x_clamped.unsqueeze(-1) >= knots[..., :-1]).sum(dim=-1) - 1).clamp(0, num_bins - 1)
     idx_col = bin_idx.unsqueeze(-1)
 
-    input_cumwidths = torch.gather(cw_in, -1, idx_col).squeeze(-1)
-    input_bin_widths = torch.gather(w_in, -1, idx_col).squeeze(-1)
-    input_cumheights = torch.gather(ch_in, -1, idx_col).squeeze(-1)
-    input_bin_heights = torch.gather(h_in, -1, idx_col).squeeze(-1)
+    input_cumwidths = torch.gather(cumwidths, -1, idx_col).squeeze(-1)
+    input_bin_widths = torch.gather(widths, -1, idx_col).squeeze(-1)
+    input_cumheights = torch.gather(cumheights, -1, idx_col).squeeze(-1)
+    input_bin_heights = torch.gather(heights, -1, idx_col).squeeze(-1)
 
     input_delta = input_bin_heights / input_bin_widths
-    dk = torch.gather(d_in, -1, idx_col).squeeze(-1)
-    dkp1 = torch.gather(d_in, -1, idx_col + 1).squeeze(-1)
+    dk = torch.gather(derivatives, -1, idx_col).squeeze(-1)
+    dkp1 = torch.gather(derivatives, -1, idx_col + 1).squeeze(-1)
     deriv_sum_m2 = dkp1 + dk - 2.0 * input_delta
 
     if inverse:
-        dy = x_in - input_cumheights
+        dy = x_clamped - input_cumheights
         a = input_bin_heights * (input_delta - dk) + dy * deriv_sum_m2
         b = input_bin_heights * dk - dy * deriv_sum_m2
         c = -input_delta * dy
@@ -246,7 +232,7 @@ def _rational_quadratic_spline(
         )
         logdet_in = -(torch.log(torch.clamp(deriv_num, min=1e-18)) - 2.0 * torch.log(torch.clamp(denom, min=1e-18)))
     else:
-        xi = ((x_in - input_cumwidths) / input_bin_widths).clamp(0.0, 1.0)
+        xi = ((x_clamped - input_cumwidths) / input_bin_widths).clamp(0.0, 1.0)
         xi_1mxi = xi * (1.0 - xi)
         denom = input_delta + deriv_sum_m2 * xi_1mxi
         numer = input_delta * (xi * xi) + dk * xi_1mxi
@@ -257,8 +243,8 @@ def _rational_quadratic_spline(
         )
         logdet_in = torch.log(torch.clamp(deriv_num, min=1e-18)) - 2.0 * torch.log(torch.clamp(denom, min=1e-18))
 
-    outputs[inside] = out_in
-    logabsdet[inside] = logdet_in
+    outputs = torch.where(inside, out_in, inputs)
+    logabsdet = torch.where(inside, logdet_in, torch.zeros_like(inputs))
     return outputs, logabsdet
 
 
