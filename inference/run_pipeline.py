@@ -114,12 +114,15 @@ def parse_args() -> argparse.Namespace:
     # Nuisance parameters
     p.add_argument(
         "--nuisances",
-        choices=["stat_only", "norm"],
+        choices=["stat_only", "norm", "norm_shape"],
         default="stat_only",
-        help="Set-level nuisance mode: stat_only or log-normal process normalizations (norm).",
+        help="Set-level nuisance mode: stat_only, norm, or norm_shape (norm + JES/TES/JER).",
     )
     p.add_argument("--bkg-norm-sigma", type=float, default=0.50, help="Log-normal sigma for top/DYbb/ZH.")
     p.add_argument("--hh-norm-sigma", type=float, default=0.06, help="Log-normal sigma for HH (LHCHWG ~6%).")
+    p.add_argument("--jes-sigma", type=float, default=0.03, help="Jet energy scale log-normal sigma.")
+    p.add_argument("--tes-sigma", type=float, default=0.03, help="Tau energy scale log-normal sigma.")
+    p.add_argument("--jer-sigma", type=float, default=0.05, help="Jet energy resolution smearing scale.")
 
     # Evaluation
     p.add_argument("--eval-samples", type=int, default=1000)
@@ -182,6 +185,9 @@ def build_config(args: argparse.Namespace) -> PairsConfig:
                 "higgs": min(0.20, args.bkg_norm_sigma),
                 "HH": args.hh_norm_sigma,
             },
+            jes_sigma=args.jes_sigma,
+            tes_sigma=args.tes_sigma,
+            jer_sigma=args.jer_sigma,
         ),
         output_dir=args.output_dir,
     )
@@ -283,6 +289,7 @@ def main() -> None:
             cfg=cfg,
             device=device,
             nuisance_model=nuisance_model,
+            feature_stats=feature_stats,
         )
         print(f"Stage 2 finished in {time.time() - t_s2:.1f}s")
 

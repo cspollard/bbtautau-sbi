@@ -140,7 +140,7 @@ class TrainConfig:
 class NuisanceConfig:
     """Set-level nuisance parameter configuration."""
 
-    mode: Literal["stat_only", "norm"] = "stat_only"
+    mode: Literal["stat_only", "norm", "norm_shape"] = "stat_only"
     # Log-normal standard deviations on process normalizations:
     # Conservative top/DYbb/ZH (~50% -> in-situ extraction) + LHCHWG HH (~6% combined
     # from NNLO+NNLL QCD scale +2.2/-5.0%, PDF+alpha_s +/-3.0%, m_t scheme +/-2.7%).
@@ -153,6 +153,10 @@ class NuisanceConfig:
             "HH": 0.06,
         }
     )
+    # Tier 2 object energy scale & resolution nuisances (mode="norm_shape")
+    jes_sigma: float = 0.03
+    tes_sigma: float = 0.03
+    jer_sigma: float = 0.05
 
 
 @dataclass

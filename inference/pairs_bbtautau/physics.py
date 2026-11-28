@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from .config import NuisanceConfig, PriorConfig
-from .data import SplitDataset
+from .data import FeatureStats, SplitDataset, featurize_raw_jets
 
 
 def hh_reweight_coefficients(kappa_lambda: np.ndarray | float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -167,12 +167,81 @@ class LogNormalNormNuisanceModel(NuisanceModel):
         return False
 
 
+def apply_shape_nuisance_to_raw_jets(
+    raw_jets: np.ndarray,
+    jet_mask: np.ndarray,
+    jes_scale: np.ndarray | float,
+    tes_scale: np.ndarray | float,
+    jer_sigma: np.ndarray | float = 0.0,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """Apply JES (non-tau jets), TES (tau jets), and optional JER smearing to raw_jets (N, J, 6)."""
+    out = raw_jets.copy()
+    is_b = jet_mask & (out[..., 0] == 1.0)
+    is_tau = jet_mask & (out[..., 2] == 1.0) & (~is_b)
+
+    jes = np.asarray(jes_scale, dtype=np.float32)
+    tes = np.asarray(tes_scale, dtype=np.float32)
+    if jes.ndim == 1:
+        jes = jes[:, None]
+    if tes.ndim == 1:
+        tes = tes[:, None]
+
+    scale = np.where(is_tau, tes, jes)
+    jer = np.asarray(jer_sigma, dtype=np.float32)
+    if rng is not None and np.any(jer > 0.0):
+        if jer.ndim == 1:
+            jer = jer[:, None]
+        smear = np.maximum(0.0, 1.0 + jer * rng.normal(size=scale.shape).astype(np.float32))
+        scale = scale * smear
+
+    scale = scale * jet_mask.astype(np.float32)
+    out[..., 3:6] = out[..., 3:6] * scale[..., None]
+    return out
+
+
+class CombinedNormAndShapeNuisanceModel(LogNormalNormNuisanceModel):
+    """Tier 1 log-normal normalizations + Tier 2 JES/TES/JER shape nuisances."""
+
+    def __init__(
+        self,
+        log_sigmas: dict[str, float],
+        jes_sigma: float = 0.03,
+        tes_sigma: float = 0.03,
+        jer_sigma: float = 0.05,
+    ) -> None:
+        super().__init__(log_sigmas)
+        self.jes_sigma = float(jes_sigma)
+        self.tes_sigma = float(tes_sigma)
+        self.jer_sigma = float(jer_sigma)
+
+    def sample_prior(self, n_sets: int, rng: np.random.Generator) -> NuisanceSample:
+        sample = super().sample_prior(n_sets, rng)
+        z_jes = rng.normal(0.0, 1.0, size=n_sets)
+        z_tes = rng.normal(0.0, 1.0, size=n_sets)
+        z_jer = rng.normal(0.0, 1.0, size=n_sets)
+        sample.values["jes_scale"] = np.exp(self.jes_sigma * z_jes).astype(np.float64)
+        sample.values["tes_scale"] = np.exp(self.tes_sigma * z_tes).astype(np.float64)
+        sample.values["jer_scale"] = (self.jer_sigma * np.abs(z_jer)).astype(np.float64)
+        return sample
+
+    def has_shape_nuisances(self) -> bool:
+        return True
+
+
 def build_nuisance_model(cfg: NuisanceConfig) -> NuisanceModel:
     """Instantiate the configured NuisanceModel."""
     if cfg.mode == "stat_only":
         return StatOnlyNuisanceModel()
     if cfg.mode == "norm":
         return LogNormalNormNuisanceModel(cfg.log_sigmas)
+    if cfg.mode == "norm_shape":
+        return CombinedNormAndShapeNuisanceModel(
+            cfg.log_sigmas,
+            jes_sigma=cfg.jes_sigma,
+            tes_sigma=cfg.tes_sigma,
+            jer_sigma=cfg.jer_sigma,
+        )
     raise ValueError(f"Unknown nuisance mode: {cfg.mode}")
 
 
@@ -184,10 +253,12 @@ class ProcessSampler:
         split: SplitDataset,
         nuisance_model: NuisanceModel | None = None,
         hh_k_factor: float = 1.0,
+        feature_stats: FeatureStats | None = None,
     ) -> None:
         self.split = split
         self.nuisance_model = nuisance_model or StatOnlyNuisanceModel()
         self.hh_k_factor = float(hh_k_factor)
+        self.feature_stats = feature_stats
         self.backgrounds = split.backgrounds
         self.signal = split.signal
 
@@ -421,6 +492,13 @@ class ProcessSampler:
         out_jets = np.zeros((batch_size, max_n, max_jets, f_jet), dtype=np.float32)
         out_jmask = np.zeros((batch_size, max_n, max_jets), dtype=bool)
         out_evts = np.zeros((batch_size, max_n, f_evt), dtype=np.float32)
+        use_shape = (
+            self.nuisance_model.has_shape_nuisances()
+            and self.feature_stats is not None
+            and psi is not None
+            and "jes_scale" in psi.values
+        )
+        out_raw = np.zeros((batch_size, max_n, max_jets, 6), dtype=np.float32) if use_shape else None
 
         slot_valid = np.arange(max_n)[None, :] < set_sizes[:, None]
         is_sig = rng.uniform(0.0, 1.0, size=(batch_size, max_n)) < sig_proposal_frac
@@ -444,9 +522,12 @@ class ProcessSampler:
                 c_sub = bkg_cols[sel]
                 ev_idx = self._draw_process_indices(b, len(r_sub), 1.0, rng)
                 pool = self.split.processes[b]
-                out_jets[r_sub, c_sub] = pool.jet_features[ev_idx]
                 out_jmask[r_sub, c_sub] = pool.jet_mask[ev_idx]
-                out_evts[r_sub, c_sub] = pool.evt_features[ev_idx]
+                if use_shape:
+                    out_raw[r_sub, c_sub] = pool.raw_jets[ev_idx]
+                else:
+                    out_jets[r_sub, c_sub] = pool.jet_features[ev_idx]
+                    out_evts[r_sub, c_sub] = pool.evt_features[ev_idx]
                 mult_b = bkg_yields_mat[r_sub, pid] / max(self.bkg_yields[b], 1e-12)
                 slot_ratios[r_sub, c_sub] = (mult_b * total_bkg_nom) / (
                     (1.0 - sig_proposal_frac) * lam_total[r_sub]
@@ -458,9 +539,12 @@ class ProcessSampler:
             ev_idx = np.searchsorted(
                 self.hh_env_cdf, rng.uniform(0.0, 1.0, size=len(sig_rows)), side="right"
             ).clip(0, sample_pool.num_events - 1)
-            out_jets[sig_rows, sig_cols] = sample_pool.jet_features[ev_idx]
             out_jmask[sig_rows, sig_cols] = sample_pool.jet_mask[ev_idx]
-            out_evts[sig_rows, sig_cols] = sample_pool.evt_features[ev_idx]
+            if use_shape:
+                out_raw[sig_rows, sig_cols] = sample_pool.raw_jets[ev_idx]
+            else:
+                out_jets[sig_rows, sig_cols] = sample_pool.jet_features[ev_idx]
+                out_evts[sig_rows, sig_cols] = sample_pool.evt_features[ev_idx]
 
             w_target = compute_hh_weights(
                 self.hh_weights[ev_idx],
@@ -471,6 +555,22 @@ class ProcessSampler:
             slot_ratios[sig_rows, sig_cols] = (w_target * self.hh_env_sum) / (
                 sig_proposal_frac * self.hh_env_weights[ev_idx] * lam_total[sig_rows]
             )
+
+        if use_shape and out_raw is not None:
+            v_r, v_c = np.nonzero(slot_valid)
+            shifted_raw = apply_shape_nuisance_to_raw_jets(
+                out_raw[v_r, v_c],
+                out_jmask[v_r, v_c],
+                jes_scale=psi.values["jes_scale"][v_r],
+                tes_scale=psi.values["tes_scale"][v_r],
+                jer_sigma=psi.values["jer_scale"][v_r],
+                rng=rng,
+            )
+            jf_s, ef_s, pass_w = featurize_raw_jets(shifted_raw, out_jmask[v_r, v_c], self.feature_stats)
+            out_jets[v_r, v_c] = jf_s
+            out_evts[v_r, v_c] = ef_s
+            # Events migrating outside the mass window under JES/TES/JER have zero acceptance
+            slot_ratios[v_r, v_c] = np.where(pass_w, slot_ratios[v_r, v_c], 0.0)
 
         iw_weights = np.prod(slot_ratios, axis=1).astype(np.float32)
         return (
@@ -570,6 +670,101 @@ class ProcessSampler:
                     nz = mult > 0
                     sum_emb += mult[nz] @ emb_f64[self.signal][nz]
                     n_tot += n_hh
+
+            counts[j] = n_tot
+            if n_tot > 0:
+                t_bars[j] = (sum_emb / float(n_tot)).astype(np.float32)
+
+        return {
+            "theta": thetas.astype(np.float32),
+            "T_bar": t_bars,
+            "N": counts,
+            "N_hh": hh_counts,
+        }
+
+    def sample_aggregated_datasets_with_shape(
+        self,
+        shape_basis: dict[str, dict[str, np.ndarray]],
+        prior: UniformPrior2D,
+        n_datasets: int,
+        rng: np.random.Generator,
+        jes_sigma: float,
+        tes_sigma: float,
+        fixed_thetas: np.ndarray | None = None,
+    ) -> dict[str, np.ndarray]:
+        """Generate Stage 2/3 aggregates with continuous JES/TES shape & acceptance shifts.
+
+        `shape_basis[proc]` holds `emb_0`, `d_jes`, `d_tes` (each `(M_p, D)`) and
+        `pass_0`, `pass_jes_p`, `pass_jes_m`, `pass_tes_p`, `pass_tes_m` (`(M_p,)` bool),
+        computed at +/-1 sigma of JES and TES.
+        """
+        if fixed_thetas is not None:
+            thetas = np.asarray(fixed_thetas, dtype=np.float32)
+            n_datasets = int(thetas.shape[0])
+        else:
+            thetas = prior.sample(n_datasets, rng)
+
+        psi_sample = self.nuisance_model.sample_prior(n_datasets, rng)
+        first_proc = next(iter(shape_basis.values()))
+        embed_dim = int(first_proc["emb_0"].shape[1])
+
+        t_bars = np.zeros((n_datasets, embed_dim), dtype=np.float32)
+        counts = np.zeros(n_datasets, dtype=np.int64)
+        hh_counts = np.zeros(n_datasets, dtype=np.int64)
+
+        for j in range(n_datasets):
+            psi_j = psi_sample.slice(j)
+            d_jes_norm = (psi_j["jes_scale"] - 1.0) / max(jes_sigma, 1e-6)
+            d_tes_norm = (psi_j["tes_scale"] - 1.0) / max(tes_sigma, 1e-6)
+            sum_emb = np.zeros(embed_dim, dtype=np.float64)
+            n_tot = 0
+
+            def _acceptance_factor(sb: dict[str, np.ndarray]) -> np.ndarray:
+                # Smooth linear interpolation of mass-window pass probability around nominal
+                p_j = sb["pass_jes_p"] if d_jes_norm >= 0.0 else sb["pass_jes_m"]
+                p_t = sb["pass_tes_p"] if d_tes_norm >= 0.0 else sb["pass_tes_m"]
+                acc = sb["pass_0"] + abs(d_jes_norm) * (p_j - sb["pass_0"]) + abs(d_tes_norm) * (p_t - sb["pass_0"])
+                return np.clip(acc, 0.0, 1.0)
+
+            for b in self.backgrounds:
+                sb = shape_basis[b]
+                acc = _acceptance_factor(sb)
+                w_eff = self.split.processes[b].weights[:, 0] * acc * self.nuisance_model.process_rate_multiplier(b, psi_j)
+                lam_b = float(w_eff.sum())
+                n_b = int(rng.poisson(max(lam_b, 0.0)))
+                if n_b > 0 and lam_b > 0.0:
+                    mult = rng.multinomial(n_b, w_eff / lam_b).astype(np.float64)
+                    nz = mult > 0
+                    emb_shifted = (
+                        sb["emb_0"][nz]
+                        + d_jes_norm * sb["d_jes"][nz]
+                        + d_tes_norm * sb["d_tes"][nz]
+                    )
+                    sum_emb += mult[nz] @ emb_shifted
+                    n_tot += n_b
+
+            mu_j = float(thetas[j, 0])
+            kl_j = float(thetas[j, 1])
+            sb_s = shape_basis[self.signal]
+            acc_s = _acceptance_factor(sb_s)
+            w_eff_s = (
+                compute_hh_weights(self.hh_weights, mu_j, kl_j)
+                * acc_s
+                * self.nuisance_model.process_rate_multiplier(self.signal, psi_j)
+            )
+            lam_hh = float(w_eff_s.sum())
+            n_hh = int(rng.poisson(max(lam_hh, 0.0)))
+            hh_counts[j] = n_hh
+            if n_hh > 0 and lam_hh > 0.0:
+                mult = rng.multinomial(n_hh, w_eff_s / lam_hh).astype(np.float64)
+                nz = mult > 0
+                emb_shifted = (
+                    sb_s["emb_0"][nz]
+                    + d_jes_norm * sb_s["d_jes"][nz]
+                    + d_tes_norm * sb_s["d_tes"][nz]
+                )
+                sum_emb += mult[nz] @ emb_shifted
+                n_tot += n_hh
 
             counts[j] = n_tot
             if n_tot > 0:

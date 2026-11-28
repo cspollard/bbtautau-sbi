@@ -11,9 +11,15 @@ import torch
 from tqdm import tqdm
 
 from .config import PairsConfig, PriorConfig
-from .data import FeatureStats, SplitDataset
+from .data import FeatureStats, SplitDataset, featurize_raw_jets
 from .models import PairsModel
-from .physics import NuisanceModel, ProcessSampler, StatOnlyNuisanceModel, UniformPrior2D
+from .physics import (
+    NuisanceModel,
+    ProcessSampler,
+    StatOnlyNuisanceModel,
+    UniformPrior2D,
+    apply_shape_nuisance_to_raw_jets,
+)
 
 
 def _build_warmup_cosine_scheduler(
@@ -116,8 +122,12 @@ def train_stage1(
 ) -> dict[str, Any]:
     """Stage 1: Jointly pretrain per-event embedder t_omega and flow head at N in {1, 2}."""
     nuis = nuisance_model or StatOnlyNuisanceModel()
-    train_sampler = ProcessSampler(train_split, nuis, hh_k_factor=cfg.data.hh_k_factor)
-    val_sampler = ProcessSampler(val_split, nuis, hh_k_factor=cfg.data.hh_k_factor)
+    train_sampler = ProcessSampler(
+        train_split, nuis, hh_k_factor=cfg.data.hh_k_factor, feature_stats=feature_stats
+    )
+    val_sampler = ProcessSampler(
+        val_split, nuis, hh_k_factor=cfg.data.hh_k_factor, feature_stats=feature_stats
+    )
 
     tcfg = cfg.train
     m_max = max(2, int(tcfg.stage1_m_max))
@@ -316,6 +326,57 @@ def _estimate_finite_mc_covariance(
     return cov_mc.astype(np.float32)
 
 
+@torch.no_grad()
+def _build_shape_basis(
+    model: PairsModel,
+    split: SplitDataset,
+    emb_0: dict[str, np.ndarray],
+    feature_stats: FeatureStats,
+    jes_sigma: float,
+    tes_sigma: float,
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Precompute +/-1 sigma JES/TES finite-difference embedding & acceptance basis."""
+    model.eval()
+    basis: dict[str, dict[str, np.ndarray]] = {}
+    shifts = {
+        "jes_p": (math.exp(jes_sigma), 1.0),
+        "jes_m": (math.exp(-jes_sigma), 1.0),
+        "tes_p": (1.0, math.exp(tes_sigma)),
+        "tes_m": (1.0, math.exp(-tes_sigma)),
+    }
+    for pname, pool in split.processes.items():
+        n = pool.num_events
+        shifted_embs: dict[str, np.ndarray] = {}
+        shifted_pass: dict[str, np.ndarray] = {}
+        for skey, (sj, st) in shifts.items():
+            raw_s = apply_shape_nuisance_to_raw_jets(pool.raw_jets, pool.jet_mask, sj, st)
+            jf_s, ef_s, pass_w = featurize_raw_jets(raw_s, pool.jet_mask, feature_stats)
+            outs = []
+            for start in range(0, n, batch_size):
+                end = min(start + batch_size, n)
+                jf = torch.from_numpy(jf_s[start:end]).to(device)
+                jm = torch.from_numpy(pool.jet_mask[start:end]).to(device)
+                ef = torch.from_numpy(ef_s[start:end]).to(device)
+                outs.append(model.embedder(jf, jm, ef).cpu().numpy())
+            shifted_embs[skey] = np.concatenate(outs, axis=0) if outs else np.empty((0, model.cfg.embed_dim), dtype=np.float32)
+            shifted_pass[skey] = pass_w.astype(np.float64)
+
+        e0 = emb_0[pname].astype(np.float64)
+        basis[pname] = {
+            "emb_0": e0,
+            "d_jes": 0.5 * (shifted_embs["jes_p"] - shifted_embs["jes_m"]).astype(np.float64),
+            "d_tes": 0.5 * (shifted_embs["tes_p"] - shifted_embs["tes_m"]).astype(np.float64),
+            "pass_0": np.ones(n, dtype=np.float64),
+            "pass_jes_p": shifted_pass["jes_p"],
+            "pass_jes_m": shifted_pass["jes_m"],
+            "pass_tes_p": shifted_pass["tes_p"],
+            "pass_tes_m": shifted_pass["tes_m"],
+        }
+    return basis
+
+
 def run_stage2(
     model: PairsModel,
     splits: dict[str, SplitDataset],
@@ -323,6 +384,7 @@ def run_stage2(
     cfg: PairsConfig,
     device: torch.device,
     nuisance_model: NuisanceModel | None = None,
+    feature_stats: FeatureStats | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Stage 2: Freeze embedder, compute per-event embeddings, and cache dataset aggregates.
 
@@ -366,13 +428,33 @@ def run_stage2(
     for idx, (agg_key, (pool_key, n_sets)) in enumerate(split_map.items()):
         rng = np.random.default_rng(tcfg.seed + 1000 + idx)
         sampler = ProcessSampler(splits[pool_key], nuis, hh_k_factor=cfg.data.hh_k_factor)
-        agg = sampler.sample_aggregated_datasets(
-            embeddings=all_embeddings[pool_key],
-            prior=prior,
-            n_datasets=n_sets,
-            rng=rng,
-            mc_bootstrap=(agg_key == "train" and tcfg.stage2_mc_bootstrap),
-        )
+        if nuis.has_shape_nuisances() and feature_stats is not None:
+            sb = _build_shape_basis(
+                model,
+                splits[pool_key],
+                all_embeddings[pool_key],
+                feature_stats,
+                jes_sigma=cfg.nuisance.jes_sigma,
+                tes_sigma=cfg.nuisance.tes_sigma,
+                batch_size=tcfg.stage2_embed_batch_size,
+                device=device,
+            )
+            agg = sampler.sample_aggregated_datasets_with_shape(
+                shape_basis=sb,
+                prior=prior,
+                n_datasets=n_sets,
+                rng=rng,
+                jes_sigma=cfg.nuisance.jes_sigma,
+                tes_sigma=cfg.nuisance.tes_sigma,
+            )
+        else:
+            agg = sampler.sample_aggregated_datasets(
+                embeddings=all_embeddings[pool_key],
+                prior=prior,
+                n_datasets=n_sets,
+                rng=rng,
+                mc_bootstrap=(agg_key == "train" and tcfg.stage2_mc_bootstrap),
+            )
         if agg_key == "train":
             agg["cov_mc"] = cov_mc
         aggregates[agg_key] = agg

@@ -122,6 +122,19 @@ cd /Users/cspollard/Physics/bbtautau-sbi/inference
 
 Outputs are written to `outputs/` (`stage1_best.pt`, `stage2_aggregates.pt`, `stage3_best.pt`, `metrics.json`, and diagnostic figures in `outputs/figs/`).
 
+### Standard Verification Checklist (Per Training Run)
+
+Run these lightweight checks on every new Stage 1 and Stage 3 training:
+
+- **After Stage 1:**
+  1. **Loss convergence (`outputs/figs/stage1_loss.png`):** Confirm `val_nll` drops below the prior baseline without premature overfitting.
+  2. **1-event LLR sufficiency (`check_llr_embedding.py`):** Confirm linear/MLP probes on frozen $t_\omega(x)$ match the raw-event oracle $\ln(p_s/p_b)$ (AUC within ~0.01–0.02 of raw oracle, Pearson $r \gtrsim 0.94$).
+- **After Stage 3:**
+  3. **Loss convergence (`outputs/figs/stage3_loss.png`):** Confirm `val_nll` converges cleanly below `5.011` (uniform prior) with a small train–val gap.
+  4. **Calibration (`outputs/figs/calibration_acauc.png`, `metrics.json`):** Check 2D HPD and 1D marginal ACAUC ($\lesssim 0.03$).
+  5. **Recovery & pulls (`outputs/figs/predicted_vs_true.png`):** Check unbiasedness in high-signal regimes and pull widths.
+  6. **Physics contours & benchmarks (`posterior_sm.png`, `posterior_contours_grid.png`, `run_benchmarks.py`):** Check the expected 95% upper limit on $\mu_{HH} \mid \kappa_\lambda = 1$, $\kappa_\lambda$ symmetry breaking, and Test NLL gain over `rate_only`.
+
 ---
 
 ## 6. Planned Next Steps

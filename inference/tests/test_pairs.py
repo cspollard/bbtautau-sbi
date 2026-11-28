@@ -54,7 +54,7 @@ def test_csv_selection_and_split_yield_preservation(tmp_path: Path):
         "0,1,1,0,-40.0,30.0,20.0,0.5",
         "0,0,0,1,0.0,50.0,10.0,0.5",
         "0,0,0,1,0.0,-45.0,-10.0,0.5",
-        # Event 2 (note event 1 skipped as 0-jet): 2 b-jets, 2 taus, m_bb too small (<75) -> FAILS
+        # Event 2 (note event 1 skipped as 0-jet): 2 b-jets, 2 taus -> PASSES (no mass-window cut)
         "2,1,1,0,50.0,0.0,0.0,0.5",
         "2,1,1,0,50.0,10.0,0.0,0.5",
         "2,0,0,1,-50.0,50.0,0.0,0.5",
@@ -69,29 +69,30 @@ def test_csv_selection_and_split_yield_preservation(tmp_path: Path):
     proc = parse_and_select_process(csv_path, name="toy", max_jets=8, lumi_pb_inv=100.0)
     assert proc.n_gen == 4  # event numbers 0..3
     assert proc.n_csv_events == 3
-    assert proc.num_events == 1
+    assert proc.num_events == 2
     np.testing.assert_allclose(proc.weights[0, 0], 100.0 * 0.5 / 4.0)
 
     # Check yield preservation across splits
     rng = np.random.default_rng(11)
-    n_syn = 100
+    n_syn = 50
+    n_tot = proc.num_events * n_syn
     fake_proc = ProcessData(
         name="HH",
         raw_jets=np.tile(proc.raw_jets, (n_syn, 1, 1)),
         jet_mask=np.tile(proc.jet_mask, (n_syn, 1)),
         evt_invariants=np.tile(proc.evt_invariants, (n_syn, 1)),
-        weights=rng.uniform(0.1, 1.0, size=(n_syn, 3)),
-        n_gen=n_syn,
-        n_csv_events=n_syn,
+        weights=rng.uniform(0.1, 1.0, size=(n_tot, 3)),
+        n_gen=n_tot,
+        n_csv_events=n_tot,
     )
     fake_bkg = ProcessData(
         name="top",
         raw_jets=np.tile(proc.raw_jets, (n_syn, 1, 1)),
         jet_mask=np.tile(proc.jet_mask, (n_syn, 1)),
         evt_invariants=np.tile(proc.evt_invariants, (n_syn, 1)),
-        weights=np.full((n_syn, 1), 0.25),
-        n_gen=n_syn,
-        n_csv_events=n_syn,
+        weights=np.full((n_tot, 1), 0.25),
+        n_gen=n_tot,
+        n_csv_events=n_tot,
     )
     cfg = DataConfig(
         backgrounds=("top",),
@@ -527,3 +528,56 @@ def test_lognormal_nuisance_model_and_sampling() -> None:
     )
     # With sigma_top=0.50 and Lambda_top=1000, std(N) >> sqrt(1000) ~ 31.6
     assert float(agg["N"].std()) > 300.0
+
+
+def test_shape_nuisance_jes_tes_pipeline(tmp_path: Path) -> None:
+    """Verify CombinedNormAndShapeNuisanceModel (JES/TES/JER) end-to-end through Stages 1-2."""
+    from pairs_bbtautau.config import NuisanceConfig
+    from pairs_bbtautau.physics import build_nuisance_model
+
+    rng = np.random.default_rng(456)
+
+    def _make_valid_proc(name: str, n_ev: int, w_cols: int, total_yield: float) -> ProcessData:
+        raw_jets = np.zeros((n_ev, 6, 6), dtype=np.float32)
+        raw_jets[:, :2, 0] = 1.0  # 2 b-jets
+        raw_jets[:, 2:4, 2] = 1.0  # 2 taus
+        # Back-to-back-ish jets giving m_bb ~ 120, m_tt ~ 90, m_bbtt > 200
+        raw_jets[:, 0, 3:6] = [60.0, 10.0, 20.0]
+        raw_jets[:, 1, 3:6] = [-60.0, -10.0, -20.0]
+        raw_jets[:, 2, 3:6] = [10.0, 45.0, 15.0]
+        raw_jets[:, 3, 3:6] = [-10.0, -45.0, -15.0]
+        raw_jets[:, :4, 3:6] += rng.normal(0.0, 3.0, size=(n_ev, 4, 3)).astype(np.float32)
+        jmask = np.zeros((n_ev, 6), dtype=bool)
+        jmask[:, :4] = True
+        invs = rng.normal(0.0, 1.0, size=(n_ev, 16)).astype(np.float32)
+        weights = np.full((n_ev, w_cols), total_yield / n_ev, dtype=np.float64)
+        return ProcessData(name, raw_jets, jmask, invs, weights, n_ev, n_ev)
+
+    procs = {"top": _make_valid_proc("top", 80, 1, 50.0), "HH": _make_valid_proc("HH", 80, 3, 10.0)}
+    data_cfg = DataConfig(backgrounds=("top",), signal="HH", lumi_pb_inv=1.0, max_jets=6)
+    splits, stats = build_splits(procs, data_cfg)
+    nuis = build_nuisance_model(
+        NuisanceConfig(mode="norm_shape", log_sigmas={"top": 0.2, "HH": 0.06}, jes_sigma=0.03, tes_sigma=0.03, jer_sigma=0.05)
+    )
+    cfg = PairsConfig(
+        prior=PriorConfig(mu_min=0.0, mu_max=5.0, kl_min=-2.0, kl_max=4.0),
+        data=data_cfg,
+        model=ModelConfig(
+            embed_dim=8, jet_hidden_dim=16, jet_num_heads=2, jet_num_layers=1,
+            event_hidden_dim=16, event_num_blocks=1, flow_num_transforms=2,
+            flow_hidden_dim=16, flow_num_blocks=1, flow_num_bins=6, context_hidden_dim=16,
+        ),
+        train=TrainConfig(
+            seed=19, device="cpu", stage1_epochs=1, stage1_batches_per_epoch=2,
+            stage1_batch_size=16, stage1_val_sets=16,
+            stage2_n_train_sets=32, stage2_n_val_sets=16, stage2_n_test_sets=16,
+        ),
+        nuisance=NuisanceConfig(mode="norm_shape"),
+        output_dir=tmp_path / "shape_out",
+    )
+    prior = UniformPrior2D(cfg.prior)
+    model = PairsModel(11, 16, torch.tensor(prior.mean, dtype=torch.float32), torch.tensor(prior.std, dtype=torch.float32), cfg.model)
+    h1 = train_stage1(model, splits["train_s1"], splits["val"], prior, stats, cfg, torch.device("cpu"), nuisance_model=nuis)
+    assert np.isfinite(h1["val_nll"]).all()
+    aggs = run_stage2(model, splits, prior, cfg, torch.device("cpu"), nuisance_model=nuis, feature_stats=stats)
+    assert aggs["train"]["T_bar"].shape == (32, 8) and np.isfinite(aggs["train"]["T_bar"]).all()

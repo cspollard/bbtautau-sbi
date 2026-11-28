@@ -252,6 +252,38 @@ def _compute_event_invariants_from_full_jets(
     return invariants, m_bbtt, m_bb, m_tt
 
 
+def featurize_raw_jets(
+    raw_jets: np.ndarray,
+    jet_mask: np.ndarray,
+    stats: FeatureStats,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Recompute standardized (jet_features, evt_features, pass_mass_window) from raw_jets.
+
+    Used when shape nuisances (JES/TES/JER) modify jet 3-momenta.
+    """
+    is_b = jet_mask & (raw_jets[..., 0] == 1.0)
+    is_tau = jet_mask & (raw_jets[..., 2] == 1.0) & (~is_b)
+    has_2b2t = (is_b.sum(axis=1) == 2) & (is_tau.sum(axis=1) == 2)
+
+    n_evt = raw_jets.shape[0]
+    invs = np.zeros((n_evt, len(EVENT_FEATURE_NAMES)), dtype=np.float32)
+    pass_window = np.zeros(n_evt, dtype=bool)
+
+    if np.any(has_2b2t):
+        p3 = raw_jets[has_2b2t, :, 3:6].astype(np.float64)
+        jet_counts = jet_mask[has_2b2t].sum(axis=1)
+        invs_sub, m_bbtt, m_bb, m_tt = _compute_event_invariants_from_full_jets(
+            p3, is_b[has_2b2t], is_tau[has_2b2t], jet_counts
+        )
+        invs[has_2b2t] = invs_sub
+        pass_window[has_2b2t] = True
+
+    raw_jf = _compute_jet_kinematic_features(raw_jets, jet_mask)
+    jf_std = ((raw_jf - stats.jet_mean) / stats.jet_std) * jet_mask[..., None].astype(np.float32)
+    ef_std = (invs - stats.evt_mean) / stats.evt_std
+    return jf_std.astype(np.float32), ef_std.astype(np.float32), pass_window
+
+
 def parse_and_select_process(
     csv_path: Path,
     name: str,
@@ -311,16 +343,8 @@ def parse_and_select_process(
         counts_tag,
     )
 
-    sel_kin = (
-        (m_bbtt > 200.0)
-        & (m_bb > 75.0)
-        & (m_bb < 150.0)
-        & (m_tt > 50.0)
-        & (m_tt < 125.0)
-    )
-
-    sel_idx = np.nonzero(sel_tags)[0][sel_kin]
-    invariants = invariants_tag[sel_kin]
+    sel_idx = np.nonzero(sel_tags)[0]
+    invariants = invariants_tag
     weights = (lumi_pb_inv / float(n_gen)) * weights_raw[sel_idx]
 
     # Sort jets per selected event by pT descending and clip/pad to max_jets
@@ -356,7 +380,7 @@ def parse_and_select_process(
 def load_or_build_process_cache(cfg: DataConfig) -> dict[str, ProcessData]:
     """Load selected process arrays from .npz cache or build from CSV files."""
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cfg.cache_dir / f"bbtautau_selected_maxjets{cfg.max_jets}_lumi{int(round(cfg.lumi_pb_inv))}.npz"
+    cache_path = cfg.cache_dir / f"bbtautau_2b2tau_maxjets{cfg.max_jets}_lumi{int(round(cfg.lumi_pb_inv))}.npz"
     proc_names = list(cfg.backgrounds) + [cfg.signal]
 
     if cache_path.exists():
