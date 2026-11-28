@@ -92,6 +92,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--stage2-train-sets", type=int, default=20_000)
     p.add_argument("--stage2-val-sets", type=int, default=4_000)
     p.add_argument("--stage2-test-sets", type=int, default=2_000)
+    p.add_argument(
+        "--stage2-mc-bootstrap",
+        action="store_true",
+        help="Bootstrap Stage 2 train MC weights via m_i ~ Poisson(1) (exact MC-stat marginalization).",
+    )
 
     # Stage 3 hyperparameters
     p.add_argument("--stage3-epochs", type=int, default=80)
@@ -144,12 +149,13 @@ def build_config(args: argparse.Namespace) -> PairsConfig:
             stage2_n_train_sets=args.stage2_train_sets,
             stage2_n_val_sets=args.stage2_val_sets,
             stage2_n_test_sets=args.stage2_test_sets,
+            stage2_mc_bootstrap=args.stage2_mc_bootstrap,
             stage3_epochs=args.stage3_epochs,
             stage3_batch_size=args.stage3_batch_size,
             stage3_lr=args.stage3_lr,
             stage3_patience=args.stage3_patience,
             stage3_reinit_head=not args.no_stage3_reinit_head,
-            stage3_mc_aug=not args.no_stage3_mc_aug,
+            stage3_mc_aug=(not args.no_stage3_mc_aug) and (not args.stage2_mc_bootstrap),
             eval_num_samples=args.eval_samples,
         ),
         output_dir=args.output_dir,

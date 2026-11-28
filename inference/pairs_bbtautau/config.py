@@ -118,6 +118,7 @@ class TrainConfig:
     stage2_n_train_sets: int = 20_000
     stage2_n_val_sets: int = 4_000
     stage2_n_test_sets: int = 2_000
+    stage2_mc_bootstrap: bool = False
 
     # Stage 3: Finetuning conditional normalizing flow head on cached aggregates
     stage3_epochs: int = 80

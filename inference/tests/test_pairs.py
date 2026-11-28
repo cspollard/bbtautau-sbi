@@ -452,3 +452,40 @@ def test_stage1_importance_weighted_and_m_max(tmp_path: Path) -> None:
     )
     hist = train_stage1(model, splits["train_s1"], splits["val"], prior, stats, cfg, torch.device("cpu"))
     assert len(hist["val_nll"]) == 2 and np.isfinite(hist["val_nll"]).all()
+
+
+def test_mc_bootstrap_exact_variance() -> None:
+    """Verify Poisson MC-weight bootstrap reproduces Var(N) = Lambda + sum w_i^2."""
+    rng = np.random.default_rng(123)
+    n_mc = 50
+    w_val = 2.0  # Lambda = 100, sum w_i^2 = 50 * 4 = 200 -> Var(N) = 300
+    raw_jets = np.zeros((n_mc, 6, 6), dtype=np.float32)
+    jmask = np.ones((n_mc, 6), dtype=bool)
+    invs = np.zeros((n_mc, 16), dtype=np.float32)
+    procs = {
+        "top": ProcessData("top", raw_jets, jmask, invs, np.full((n_mc, 1), w_val), n_mc, n_mc),
+        "HH": ProcessData("HH", raw_jets, jmask, invs, np.zeros((n_mc, 3)), n_mc, n_mc),
+    }
+    data_cfg = DataConfig(
+        backgrounds=("top",), signal="HH", lumi_pb_inv=1.0, max_jets=6,
+        stage1_train_frac=0.25, stage3_train_frac=0.25, val_frac=0.25, test_frac=0.25,
+    )
+    splits, _ = build_splits(procs, data_cfg)
+    # Use test split where compensated w_val = 2.0 * 4 = 8.0, n_split = 12 or 13 -> check exact formula
+    pool = splits["train_s3"].processes["top"]
+    w_arr = pool.weights[:, 0]
+    lam = float(w_arr.sum())
+    expected_var = lam + float(np.sum(w_arr ** 2))
+
+    sampler = ProcessSampler(splits["train_s3"])
+    prior = UniformPrior2D(PriorConfig(mu_min=0.0, mu_max=1.0, kl_min=0.0, kl_max=2.0))
+    embs = {
+        "top": rng.normal(size=(pool.num_events, 4)).astype(np.float32),
+        "HH": np.zeros((splits["train_s3"].processes["HH"].num_events, 4), dtype=np.float32),
+    }
+    fixed = np.zeros((4000, 2), dtype=np.float32)
+    agg = sampler.sample_aggregated_datasets(embs, prior, n_datasets=4000, rng=rng, fixed_thetas=fixed, mc_bootstrap=True)
+    emp_mean = float(agg["N"].mean())
+    emp_var = float(agg["N"].var())
+    assert abs(emp_mean - lam) / lam < 0.05
+    assert abs(emp_var - expected_var) / expected_var < 0.12

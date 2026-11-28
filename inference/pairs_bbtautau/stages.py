@@ -371,6 +371,7 @@ def run_stage2(
             prior=prior,
             n_datasets=n_sets,
             rng=rng,
+            mc_bootstrap=(agg_key == "train" and tcfg.stage2_mc_bootstrap),
         )
         if agg_key == "train":
             agg["cov_mc"] = cov_mc

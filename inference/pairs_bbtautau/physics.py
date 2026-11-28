@@ -449,12 +449,16 @@ class ProcessSampler:
         n_datasets: int,
         rng: np.random.Generator,
         fixed_thetas: np.ndarray | None = None,
+        mc_bootstrap: bool = False,
     ) -> dict[str, np.ndarray]:
         """Generate Stage 2/3 Poisson-sampled dataset-level mean embeddings T_bar and counts N.
 
         Uses exact Poisson thinning per process: N_p ~ Poisson(Lambda_p(theta, psi)),
         N = sum_p N_p ~ Poisson(Lambda_tot), and T_bar = (1/N) * sum_{p} sum_{r=1}^{N_p} e_{i_r},
         accumulated in float64 to preserve precision over N ~ 16,500 events.
+
+        When mc_bootstrap=True, draws per-MC-event template multiplicities m_i ~ Poisson(1)
+        once per dataset (exact unbinned Barlow-Beeston MC-stat marginalization).
         """
         if fixed_thetas is not None:
             thetas = np.asarray(fixed_thetas, dtype=np.float32)
@@ -480,29 +484,54 @@ class ProcessSampler:
             n_tot = 0
 
             for b in self.backgrounds:
-                lam_b = self.bkg_yields[b] * self.nuisance_model.process_rate_multiplier(b, psi_j)
-                n_b = int(rng.poisson(max(lam_b, 0.0)))
-                if n_b > 0:
-                    idx = self._draw_process_indices(b, n_b, 1.0, rng)
-                    # bincount trick avoids huge gather when n_b > pool size
-                    pool_size = emb_f64[b].shape[0]
-                    mult = np.bincount(idx, minlength=pool_size).astype(np.float64)
-                    nz = mult > 0
-                    sum_emb += mult[nz] @ emb_f64[b][nz]
-                    n_tot += n_b
+                mult_b = self.nuisance_model.process_rate_multiplier(b, psi_j)
+                pool_size = emb_f64[b].shape[0]
+                if mc_bootstrap:
+                    m_mc = rng.poisson(1.0, size=pool_size).astype(np.float64)
+                    w_eff = m_mc * self.split.processes[b].weights[:, 0] * mult_b
+                    lam_b = float(w_eff.sum())
+                    n_b = int(rng.poisson(max(lam_b, 0.0)))
+                    if n_b > 0 and lam_b > 0.0:
+                        mult = rng.multinomial(n_b, w_eff / lam_b).astype(np.float64)
+                        nz = mult > 0
+                        sum_emb += mult[nz] @ emb_f64[b][nz]
+                        n_tot += n_b
+                else:
+                    lam_b = self.bkg_yields[b] * mult_b
+                    n_b = int(rng.poisson(max(lam_b, 0.0)))
+                    if n_b > 0:
+                        idx = self._draw_process_indices(b, n_b, 1.0, rng)
+                        # bincount trick avoids huge gather when n_b > pool size
+                        mult = np.bincount(idx, minlength=pool_size).astype(np.float64)
+                        nz = mult > 0
+                        sum_emb += mult[nz] @ emb_f64[b][nz]
+                        n_tot += n_b
 
             mu_j = float(thetas[j, 0])
             kl_j = float(thetas[j, 1])
-            lam_hh = float(self.hh_expected_yield(mu_j, kl_j, psi_j))
-            n_hh = int(rng.poisson(max(lam_hh, 0.0)))
-            hh_counts[j] = n_hh
-            if n_hh > 0:
-                idx_hh = self._draw_process_indices(self.signal, n_hh, kl_j, rng)
-                pool_size = emb_f64[self.signal].shape[0]
-                mult = np.bincount(idx_hh, minlength=pool_size).astype(np.float64)
-                nz = mult > 0
-                sum_emb += mult[nz] @ emb_f64[self.signal][nz]
-                n_tot += n_hh
+            sig_pool_size = emb_f64[self.signal].shape[0]
+            if mc_bootstrap:
+                mult_s = self.nuisance_model.process_rate_multiplier(self.signal, psi_j)
+                m_mc = rng.poisson(1.0, size=sig_pool_size).astype(np.float64)
+                w_eff = m_mc * compute_hh_weights(self.hh_weights, mu_j, kl_j) * mult_s
+                lam_hh = float(w_eff.sum())
+                n_hh = int(rng.poisson(max(lam_hh, 0.0)))
+                hh_counts[j] = n_hh
+                if n_hh > 0 and lam_hh > 0.0:
+                    mult = rng.multinomial(n_hh, w_eff / lam_hh).astype(np.float64)
+                    nz = mult > 0
+                    sum_emb += mult[nz] @ emb_f64[self.signal][nz]
+                    n_tot += n_hh
+            else:
+                lam_hh = float(self.hh_expected_yield(mu_j, kl_j, psi_j))
+                n_hh = int(rng.poisson(max(lam_hh, 0.0)))
+                hh_counts[j] = n_hh
+                if n_hh > 0:
+                    idx_hh = self._draw_process_indices(self.signal, n_hh, kl_j, rng)
+                    mult = np.bincount(idx_hh, minlength=sig_pool_size).astype(np.float64)
+                    nz = mult > 0
+                    sum_emb += mult[nz] @ emb_f64[self.signal][nz]
+                    n_tot += n_hh
 
             counts[j] = n_tot
             if n_tot > 0:
