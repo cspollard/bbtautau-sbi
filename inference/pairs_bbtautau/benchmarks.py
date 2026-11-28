@@ -570,29 +570,35 @@ def evaluate_nre_oracle_sets(
     th_emb = oracle.theta_net(th_std)  # (G, d)
     n_grid = theta_flat.shape[0]
 
+    # Precompute log r(x | theta_grid) once per unique test MC event
+    proc_logits: dict[str, np.ndarray] = {}
+    for pname, embs_cpu in proc_embs.items():
+        n_p = embs_cpu.shape[0]
+        if n_p == 0:
+            proc_logits[pname] = np.empty((0, n_grid), dtype=np.float64)
+            continue
+        chunks = []
+        for s in range(0, n_p, 256):
+            eb = embs_cpu[s : s + 256].to(device)
+            m = eb.shape[0]
+            eb_exp = eb.unsqueeze(1).expand(m, n_grid, -1)
+            th_exp = th_emb.unsqueeze(0).expand(m, n_grid, -1)
+            logits = oracle.head(torch.cat([eb_exp, th_exp], dim=-1)).squeeze(-1)  # (m, G)
+            chunks.append(logits.cpu().numpy().astype(np.float64))
+        proc_logits[pname] = np.concatenate(chunks, axis=0)
+
     n_sets = len(datasets.theta)
     log_lik_grid = np.empty((n_sets, n_mu, n_kl), dtype=np.float64)
 
     for j in range(n_sets):
         n_tot = float(datasets.n_events[j])
         log_pois = n_tot * np.log(lam_grid) - lam_grid - gammaln(n_tot + 1.0)
-        parts = [proc_embs[pname][idxs] for pname, idxs in datasets.proc_indices[j].items() if len(idxs) > 0]
-        if not parts:
-            log_lik_grid[j] = log_pois
-            continue
-        ev_emb = torch.cat(parts, dim=0).to(device)  # (N_j, d)
-        sum_log_r = torch.zeros(n_grid, dtype=torch.float64, device=device)
+        sum_log_r = np.zeros(n_grid, dtype=np.float64)
+        for pname, idxs in datasets.proc_indices[j].items():
+            if len(idxs) > 0:
+                sum_log_r += proc_logits[pname][idxs].sum(axis=0)
 
-        # Process events in chunks to keep memory tiny even for N_j ~ 16,500
-        for s in range(0, ev_emb.shape[0], 512):
-            eb = ev_emb[s : s + 512]  # (m, d)
-            m = eb.shape[0]
-            eb_exp = eb.unsqueeze(1).expand(m, n_grid, -1)
-            th_exp = th_emb.unsqueeze(0).expand(m, n_grid, -1)
-            logits = oracle.head(torch.cat([eb_exp, th_exp], dim=-1)).squeeze(-1)  # (m, G)
-            sum_log_r += logits.double().sum(dim=0)
-
-        log_lik_grid[j] = log_pois + sum_log_r.cpu().numpy().reshape(n_mu, n_kl)
+        log_lik_grid[j] = log_pois + sum_log_r.reshape(n_mu, n_kl)
 
     results, log_post_grid = evaluate_grid_posteriors(
         log_lik_grid=log_lik_grid,

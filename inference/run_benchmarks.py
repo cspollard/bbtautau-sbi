@@ -30,7 +30,7 @@ from pairs_bbtautau.config import (
 from pairs_bbtautau.data import build_splits, load_or_build_process_cache
 from pairs_bbtautau.metrics import evaluate_stage3_model
 from pairs_bbtautau.physics import ProcessSampler, UniformPrior2D
-from pairs_bbtautau.stages import load_checkpoint
+from pairs_bbtautau.stages import _embed_split, load_checkpoint, run_stage2, train_stage1, train_stage3
 
 
 def parse_args() -> argparse.Namespace:
@@ -158,7 +158,7 @@ def main() -> None:
     if ckpt_path.exists() and not args.smoke:
         model, _ = load_checkpoint(ckpt_path, cfg, prior, device)
         model.eval()
-        emb_test = model.embed_split(splits["test"], batch_size=2048, device=device)
+        emb_test = _embed_split(model, splits["test"], device=device, batch_size=2048)
         t_bars = np.zeros((len(datasets.theta), cfg.model.embed_dim), dtype=np.float32)
         for j, idx_map in enumerate(datasets.proc_indices):
             parts = [emb_test[pname][idxs] for pname, idxs in idx_map.items() if len(idxs) > 0]
