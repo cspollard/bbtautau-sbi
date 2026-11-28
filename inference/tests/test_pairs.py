@@ -581,3 +581,54 @@ def test_shape_nuisance_jes_tes_pipeline(tmp_path: Path) -> None:
     assert np.isfinite(h1["val_nll"]).all()
     aggs = run_stage2(model, splits, prior, cfg, torch.device("cpu"), nuisance_model=nuis, feature_stats=stats)
     assert aggs["train"]["T_bar"].shape == (32, 8) and np.isfinite(aggs["train"]["T_bar"]).all()
+
+
+def test_informativeness_event_and_dataset_metrics() -> None:
+    """Verify per-event sensitivity/grad-norm, proposal normalization, and dataset informativeness."""
+    from pairs_bbtautau.informativeness import (
+        dataset_informativeness,
+        event_embedding_gradient_norm,
+        event_posterior_sensitivity,
+        normalize_proposal_weights,
+    )
+
+    rng = np.random.default_rng(789)
+    n_mc = 40
+    raw_jets = np.zeros((n_mc, 6, 6), dtype=np.float32)
+    raw_jets[:, :4, 3:6] = rng.normal(0.0, 30.0, size=(n_mc, 4, 3)).astype(np.float32)
+    raw_jets[:, :2, 0] = 1.0
+    raw_jets[:, 2:4, 2] = 1.0
+    jmask = np.zeros((n_mc, 6), dtype=bool)
+    jmask[:, :4] = True
+    invs = rng.normal(0.0, 1.0, size=(n_mc, 16)).astype(np.float32)
+    procs = {
+        "top": ProcessData("top", raw_jets, jmask, invs, np.ones((n_mc, 1)), n_mc, n_mc),
+        "HH": ProcessData("HH", raw_jets, jmask, invs, np.ones((n_mc, 3)), n_mc, n_mc),
+    }
+    splits, _ = build_splits(procs, DataConfig(backgrounds=("top",), signal="HH", lumi_pb_inv=1.0, max_jets=6))
+    prior = UniformPrior2D(PriorConfig(mu_min=0.0, mu_max=5.0, kl_min=-2.0, kl_max=4.0))
+    mcfg = ModelConfig(
+        embed_dim=8, jet_hidden_dim=16, jet_num_heads=2, jet_num_layers=1,
+        event_hidden_dim=16, event_num_blocks=1, flow_num_transforms=2,
+        flow_hidden_dim=16, flow_num_blocks=1, flow_num_bins=6, context_hidden_dim=16,
+    )
+    model = PairsModel(
+        11, 16, torch.tensor(prior.mean, dtype=torch.float32), torch.tensor(prior.std, dtype=torch.float32), mcfg
+    )
+    dev = torch.device("cpu")
+
+    sens = event_posterior_sensitivity(model, splits["train_s1"], prior, dev, n_mu=3, n_kl=3)
+    gnorm = event_embedding_gradient_norm(model, splits["train_s1"], prior, dev, n_mu=3, n_kl=3)
+    for pname in ("top", "HH"):
+        n_p = splits["train_s1"].processes[pname].num_events
+        assert sens[pname].shape == (n_p,) and np.all(np.isfinite(sens[pname])) and np.all(sens[pname] >= 0.0)
+        assert gnorm[pname].shape == (n_p,) and np.all(np.isfinite(gnorm[pname])) and np.all(gnorm[pname] >= 0.0)
+
+    q = normalize_proposal_weights(gnorm["top"], np.ones_like(gnorm["top"]), floor_eps=0.2)
+    assert np.isclose(q.sum(), 1.0) and np.all(q > 0.0)
+
+    t_bar = torch.randn(6, 8)
+    counts = torch.tensor([100, 200, 300, 400, 500, 600], dtype=torch.long)
+    d_info = dataset_informativeness(model, t_bar, counts, prior, num_samples=32, n_mu=3, n_kl=3)
+    for k in ("kl_gain", "post_std_logp", "summary_grad_norm"):
+        assert d_info[k].shape == (6,) and np.all(np.isfinite(d_info[k]))
