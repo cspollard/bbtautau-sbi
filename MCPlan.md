@@ -76,3 +76,17 @@ Split MadGraph runs into batches of $\le 500\text{k}$–$1\text{M}$ events (MG5 
 - **MadGraph (`top`, 6-body tree-level):** ~13–15 min per `333k` events (`~1.4M events/hr` on 6 cores).
 - **MadGraph (`HH-rw`, loop-induced + reweighting + MadSpin):** ~1.5 hr generation + ~30 min reweighting (`kl0`, `kl2`) + ~5 min MadSpin for `500k` events.
 - **Pythia 8.318 + Rivet 4.1.5 (`main144`):** single-threaded, `~2,700 events/min` per core (`~1M events/hr` across 6 cores).
+
+---
+
+## MadGraph / Environment Notes for Reproducing `HH-rw`
+
+If setting up `mg5amcnlo-3.6.4` on another machine, the following fixes were required for `HH-rw` generation, reweighting, and MadSpin to run cleanly:
+
+1. **Python environment (`six` + `f2py`):** MadGraph requires `six`, and **reweighting requires `f2py`** (`numpy`) on `PATH` (otherwise `reweight` is marked `Not Avail.`). Run `mg5_aMC` with a Python environment that has both `six` and `f2py` (e.g., Python 3.9 + `numpy 1.26.x`).
+2. **`loop_sm_hh` model + Python 3 `write_param_card.py`:** Copy the `loop_sm_hh` UFO model (which exposes $\kappa_\lambda$ as `BSMINPUTS 1`) into `$MGPATH/models/loop_sm_hh`, and replace its `write_param_card.py` with the one from `$MGPATH/models/loop_sm/write_param_card.py` (fixes `ImportError: attempted relative import with no known parent package` in Python 3).
+3. **`Template/LO/Source/dsample.f` (MG5 3.6.4 Fortran `FORMAT` bug):** Lines 603–604 are missing commas between `i12` descriptors and `','` literals (`a15,i12,',',i12',',i12...`), which newer `gfortran` rejects at runtime during MadLoop survey. Add the missing commas (`',',i12,',',i12...`).
+4. **Coupling-order syntax check (`acknowledged_v3.1_syntax`):** Reweighting `g g > h h QED<=2 [noborn=QCD]` requires `set acknowledged_v3.1_syntax True` (already in `rivet/HH.MG`, or run `set acknowledged_v3.1_syntax True --global` once in `mg5_aMC`).
+5. **MadSpin on loop-induced `gg -> hh`:** Requires `set spinmode none` in `madspin_card.dat` (otherwise `decay_events` fails with `InvalidCmd: not supported format standalone_msP`); already configured in `rivet/HH-rw_madspin_card.dat`.
+6. **macOS only:** `rivet/setup.sh` exports `SDKROOT`, `CPLUS_INCLUDE_PATH`, and `LIBRARY_PATH` so `gfortran` can resolve `-lc++` when linking MadLoop.
+
