@@ -92,6 +92,15 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Use importance-weighted Stage 1 loss with fixed 50/50 bkg/HH proposal q_0.",
     )
+    p.add_argument(
+        "--stage1-info-weighting",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Weight Stage 1 gradients by ramped posterior-sensitivity informativeness.",
+    )
+    p.add_argument("--stage1-info-ramp-epochs", type=float, default=1.0)
+    p.add_argument("--stage1-info-ramp-tau", type=float, default=0.25)
+    p.add_argument("--stage1-info-floor", type=float, default=0.2)
 
     # Stage 2 caching
     p.add_argument("--stage2-train-sets", type=int, default=20_000)
@@ -164,6 +173,10 @@ def build_config(args: argparse.Namespace) -> PairsConfig:
             stage1_mu_max=s1_mu_max,
             stage1_m_max=args.stage1_m_max,
             stage1_importance_weighted=args.stage1_iw,
+            stage1_info_weighting=args.stage1_info_weighting,
+            stage1_info_ramp_epochs=args.stage1_info_ramp_epochs,
+            stage1_info_ramp_tau=args.stage1_info_ramp_tau,
+            stage1_info_floor=args.stage1_info_floor,
             stage2_n_train_sets=args.stage2_train_sets,
             stage2_n_val_sets=args.stage2_val_sets,
             stage2_n_test_sets=args.stage2_test_sets,

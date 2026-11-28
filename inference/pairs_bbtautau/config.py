@@ -112,6 +112,13 @@ class TrainConfig:
     stage1_importance_weighted: bool = True
     # Optional wider mu_HH prior range during Stage 1 (only needed when stage1_importance_weighted=False).
     stage1_mu_max: float | None = None
+    # Ramped per-set informativeness gradient weighting during Stage 1
+    stage1_info_weighting: bool = False
+    stage1_info_ramp_epochs: float = 1.0
+    stage1_info_ramp_tau: float = 0.25
+    stage1_info_floor: float = 0.2
+    stage1_info_power: float = 1.0
+    stage1_info_probe_grid: int = 3
 
     # Stage 2: Embedding & dataset-level aggregate caching
     stage2_embed_batch_size: int = 2048

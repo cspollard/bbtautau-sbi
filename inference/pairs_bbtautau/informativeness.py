@@ -15,7 +15,6 @@ import torch
 from .data import SplitDataset
 from .models import PairsModel
 from .physics import UniformPrior2D
-from .stages import _embed_split
 
 
 def make_probe_theta_grid(
@@ -43,6 +42,8 @@ def event_posterior_sensitivity(
     embeddings: dict[str, np.ndarray] | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute per-event Std_theta[log q_phi(theta | t_omega(x), N=1)] without backprop."""
+    from .stages import _embed_split
+
     model.eval()
     embs = embeddings if embeddings is not None else _embed_split(model, split, batch_size=batch_size, device=device)
     theta_grid = make_probe_theta_grid(prior, n_mu=n_mu, n_kl=n_kl).to(device)  # (K, 2)
@@ -84,6 +85,8 @@ def event_embedding_gradient_norm(
 
     Differentiates only through the lightweight flow head (O(1) w.r.t. embedder depth).
     """
+    from .stages import _embed_split
+
     model.eval()
     embs = embeddings if embeddings is not None else _embed_split(model, split, batch_size=batch_size, device=device)
     theta_grid = make_probe_theta_grid(prior, n_mu=n_mu, n_kl=n_kl).to(device)  # (K, 2)
@@ -192,3 +195,38 @@ def dataset_informativeness(
         "post_std_logp": post_std_logp,
         "summary_grad_norm": summary_grad_norm,
     }
+
+
+@torch.no_grad()
+def batch_set_informativeness_weights(
+    model: PairsModel,
+    t_bar: torch.Tensor,
+    counts: torch.Tensor,
+    theta_probe: torch.Tensor,
+    alpha: float,
+    floor_eps: float = 0.2,
+    power: float = 1.0,
+    ema_mean: float | None = None,
+    ema_decay: float = 0.95,
+) -> tuple[torch.Tensor, float]:
+    """Compute floored, ramped per-set gradient weights from posterior sensitivity on (t_bar, counts)."""
+    if not (0.0 <= floor_eps <= 1.0):
+        raise ValueError(f"floor_eps must be in [0, 1], got {floor_eps}")
+    model.eval()
+    batch_size = t_bar.shape[0]
+    k_pts = theta_probe.shape[0]
+    tb_rep = t_bar.unsqueeze(1).expand(batch_size, k_pts, -1).reshape(batch_size * k_pts, -1)
+    cnt_rep = counts.unsqueeze(1).expand(batch_size, k_pts).reshape(batch_size * k_pts)
+    th_rep = theta_probe.unsqueeze(0).expand(batch_size, k_pts, 2).reshape(batch_size * k_pts, 2)
+    logp = model.log_prob_from_aggregates(th_rep, tb_rep, cnt_rep).reshape(batch_size, k_pts)
+    sens = logp.std(dim=1).clamp(min=0.0)
+    if power != 1.0:
+        sens = torch.pow(sens, power)
+
+    batch_mean = float(sens.mean().item())
+    new_ema = batch_mean if ema_mean is None else ema_decay * ema_mean + (1.0 - ema_decay) * batch_mean
+    rel = sens / max(new_ema, 1e-6)
+    w_info = (1.0 - floor_eps) * rel + floor_eps
+    w_eff = (1.0 - alpha) + alpha * w_info
+    w_eff = w_eff / w_eff.mean().clamp(min=1e-6)
+    return w_eff, new_ema

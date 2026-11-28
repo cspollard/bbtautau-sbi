@@ -632,3 +632,55 @@ def test_informativeness_event_and_dataset_metrics() -> None:
     d_info = dataset_informativeness(model, t_bar, counts, prior, num_samples=32, n_mu=3, n_kl=3)
     for k in ("kl_gain", "post_std_logp", "summary_grad_norm"):
         assert d_info[k].shape == (6,) and np.all(np.isfinite(d_info[k]))
+
+
+def test_stage1_ramped_info_weighting(tmp_path) -> None:
+    from pairs_bbtautau.informativeness import batch_set_informativeness_weights, make_probe_theta_grid
+    from pairs_bbtautau.stages import train_stage1
+
+    rng = np.random.default_rng(101)
+    n_mc = 60
+    raw_jets = np.zeros((n_mc, 6, 6), dtype=np.float32)
+    raw_jets[:, :4, 3:6] = rng.normal(0.0, 30.0, size=(n_mc, 4, 3)).astype(np.float32)
+    raw_jets[:, :2, 0] = 1.0
+    raw_jets[:, 2:4, 2] = 1.0
+    jmask = np.zeros((n_mc, 6), dtype=bool)
+    jmask[:, :4] = True
+    invs = rng.normal(0.0, 1.0, size=(n_mc, 16)).astype(np.float32)
+    procs = {
+        "top": ProcessData("top", raw_jets, jmask, invs, np.ones((n_mc, 1)), n_mc, n_mc),
+        "HH": ProcessData("HH", raw_jets, jmask, invs, np.ones((n_mc, 3)), n_mc, n_mc),
+    }
+    dcfg = DataConfig(backgrounds=("top",), signal="HH", lumi_pb_inv=1.0, max_jets=6)
+    splits, fstats = build_splits(procs, dcfg)
+    prior = UniformPrior2D(PriorConfig(mu_min=0.0, mu_max=5.0, kl_min=-2.0, kl_max=4.0))
+    mcfg = ModelConfig(
+        embed_dim=8, jet_hidden_dim=16, jet_num_heads=2, jet_num_layers=1,
+        event_hidden_dim=16, event_num_blocks=1, flow_num_transforms=2,
+        flow_hidden_dim=16, flow_num_blocks=1, flow_num_bins=6, context_hidden_dim=16,
+    )
+    tcfg = TrainConfig(
+        device="cpu",
+        stage1_epochs=2,
+        stage1_batches_per_epoch=3,
+        stage1_batch_size=16,
+        stage1_val_sets=32,
+        stage1_importance_weighted=False,
+        stage1_info_weighting=True,
+        stage1_info_ramp_epochs=1.0,
+        stage1_info_ramp_tau=0.25,
+        stage1_info_floor=0.2,
+    )
+    cfg = PairsConfig(data=dcfg, prior=prior.cfg, model=mcfg, train=tcfg, output_dir=tmp_path)
+    model = PairsModel(
+        11, 16, torch.tensor(prior.mean, dtype=torch.float32), torch.tensor(prior.std, dtype=torch.float32), mcfg
+    )
+    probe = make_probe_theta_grid(prior, n_mu=3, n_kl=3)
+    w, ema = batch_set_informativeness_weights(
+        model, torch.randn(8, 8), torch.ones(8, dtype=torch.long), probe, alpha=0.5, floor_eps=0.2
+    )
+    assert w.shape == (8,) and torch.isfinite(w).all() and torch.isclose(w.mean(), torch.tensor(1.0), atol=1e-4)
+    assert ema >= 0.0
+
+    hist = train_stage1(model, splits["train_s1"], splits["val"], prior, fstats, cfg, torch.device("cpu"))
+    assert len(hist["val_nll"]) == 2 and all(np.isfinite(hist["val_nll"]))

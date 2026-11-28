@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from .config import PairsConfig, PriorConfig
 from .data import FeatureStats, SplitDataset, featurize_raw_jets
+from .informativeness import batch_set_informativeness_weights, make_probe_theta_grid
 from .models import PairsModel
 from .physics import (
     NuisanceModel,
@@ -188,6 +189,12 @@ def train_stage1(
     no_improve = 0
     ckpt_path = cfg.output_dir / "checkpoints" / "stage1_best.pt"
 
+    theta_probe = None
+    ema_sens: float | None = None
+    if tcfg.stage1_info_weighting:
+        g = max(2, int(tcfg.stage1_info_probe_grid))
+        theta_probe = make_probe_theta_grid(prior_s1, n_mu=g, n_kl=g).to(device)
+
     for epoch in range(1, tcfg.stage1_epochs + 1):
         model.train()
         running_loss = 0.0
@@ -196,7 +203,7 @@ def train_stage1(
             desc=f"Stage 1 Epoch {epoch:02d}/{tcfg.stage1_epochs}",
             leave=False,
         )
-        for _ in pbar:
+        for batch_idx in pbar:
             theta_np = prior_s1.sample(tcfg.stage1_batch_size, rng_train)
             sizes = _sample_sizes(tcfg.stage1_batch_size, rng_train)
             psi = nuis.sample_prior(tcfg.stage1_batch_size, rng_train)
@@ -217,8 +224,27 @@ def train_stage1(
             em = em.to(device)
 
             optimizer.zero_grad(set_to_none=True)
-            nll_vec = model.nll_from_sets(th_t, jf, jm, ef, em)
-            loss = (iw_t * nll_vec).mean() if iw_t is not None else nll_vec.mean()
+            t_bar, counts = model.aggregate_sets(jf, jm, ef, em)
+            nll_vec = model.nll_from_aggregates(th_t, t_bar, counts)
+            if tcfg.stage1_info_weighting and theta_probe is not None:
+                t_epoch = float(epoch - 1) + float(batch_idx + 1) / float(tcfg.stage1_batches_per_epoch)
+                z = (t_epoch - tcfg.stage1_info_ramp_epochs) / max(tcfg.stage1_info_ramp_tau, 1e-6)
+                z = max(min(z, 30.0), -30.0)
+                alpha = 1.0 / (1.0 + math.exp(-z))
+                w_info, ema_sens = batch_set_informativeness_weights(
+                    model=model,
+                    t_bar=t_bar.detach(),
+                    counts=counts,
+                    theta_probe=theta_probe,
+                    alpha=alpha,
+                    floor_eps=tcfg.stage1_info_floor,
+                    power=tcfg.stage1_info_power,
+                    ema_mean=ema_sens,
+                )
+                model.train()
+                loss = (iw_t * w_info * nll_vec).mean() if iw_t is not None else (w_info * nll_vec).mean()
+            else:
+                loss = (iw_t * nll_vec).mean() if iw_t is not None else nll_vec.mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=tcfg.stage1_grad_clip)
             optimizer.step()
