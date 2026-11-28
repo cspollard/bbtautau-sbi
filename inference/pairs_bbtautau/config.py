@@ -50,6 +50,7 @@ class DataConfig:
     data_dir: Path = DEFAULT_INFERENCE_DIR
     cache_dir: Path = DEFAULT_INFERENCE_DIR / "cache"
     lumi_pb_inv: float = 100_000.0  # 100 fb^-1 = 100e3 pb^-1
+    hh_k_factor: float = 1.0  # Optional NNLO+NNLL K-factor multiplier on HH signal weights
     max_jets: int = 12
     # Disjoint MC pools: Stage 1 embedder training, Stage 3 aggregate training (unseen by S1),
     # validation, and held-out test evaluation.

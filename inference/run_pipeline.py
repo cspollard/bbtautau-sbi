@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
 
     # Physics & Prior bounds
     p.add_argument("--lumi", type=float, default=100_000.0, help="Integrated luminosity in pb^-1.")
+    p.add_argument("--k-factor", type=float, default=1.0, help="NNLO/LO K-factor multiplier on HH signal.")
     p.add_argument("--max-jets", type=int, default=12)
     p.add_argument("--mu-min", type=float, default=0.0)
     p.add_argument("--mu-max", type=float, default=10.0)
@@ -106,6 +107,7 @@ def build_config(args: argparse.Namespace) -> PairsConfig:
             data_dir=args.data_dir,
             cache_dir=args.cache_dir,
             lumi_pb_inv=args.lumi,
+            hh_k_factor=args.k_factor,
             max_jets=args.max_jets,
         ),
         model=ModelConfig(

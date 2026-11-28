@@ -315,3 +315,80 @@ def test_end_to_end_pairs_smoke_pipeline(tmp_path: Path):
     assert 0.0 <= res.acauc_mu_marginal <= 0.5
     assert 0.0 <= res.acauc_kl_marginal <= 0.5
     assert res.rmae_mu >= 0.0 and res.rmae_kl >= 0.0
+
+
+def test_benchmarks_rate_binned_and_nre_oracle() -> None:
+    """Verify Rate-only, Binned 2D, and N=1 NRE Oracle on synthetic splits."""
+    from pairs_bbtautau.benchmarks import (
+        BinnedLikelihoodModel,
+        evaluate_nre_oracle_sets,
+        evaluate_rate_only_baseline,
+        sample_full_test_sets,
+        train_nre_oracle,
+    )
+
+    rng = np.random.default_rng(99)
+
+    def _make_proc(name: str, n_ev: int, base_shift: float, w_cols: int, total_yield: float) -> ProcessData:
+        raw_jets = np.zeros((n_ev, 6, 6), dtype=np.float32)
+        raw_jets[:, :4, 3:6] = rng.normal(loc=base_shift * 20.0, scale=30.0, size=(n_ev, 4, 3)).astype(np.float32)
+        raw_jets[:, :2, 0] = 1.0
+        raw_jets[:, 2:4, 2] = 1.0
+        jmask = np.zeros((n_ev, 6), dtype=bool)
+        jmask[:, :4] = True
+        invs = rng.normal(loc=1.0 + base_shift * 0.2, scale=0.2, size=(n_ev, 16)).astype(np.float32)
+        weights = np.full((n_ev, w_cols), total_yield / n_ev, dtype=np.float64)
+        if w_cols == 3:
+            weights[:, 1] *= 1.5
+            weights[:, 2] *= 0.7
+        return ProcessData(
+            name=name,
+            raw_jets=raw_jets,
+            jet_mask=jmask,
+            evt_invariants=invs,
+            weights=weights,
+            n_gen=n_ev,
+            n_csv_events=n_ev,
+        )
+
+    procs = {
+        "top": _make_proc("top", 120, 0.0, 1, 40.0),
+        "HH": _make_proc("HH", 120, 1.0, 3, 5.0),
+    }
+    data_cfg = DataConfig(
+        backgrounds=("top",),
+        signal="HH",
+        lumi_pb_inv=1.0,
+        max_jets=6,
+    )
+    splits, stats = build_splits(procs, data_cfg)
+    prior = UniformPrior2D(PriorConfig(mu_min=0.0, mu_max=5.0, kl_min=-2.0, kl_max=5.0))
+    rng = np.random.default_rng(99)
+    train_sampler = ProcessSampler(splits["train_s3"])
+    test_sampler = ProcessSampler(splits["test"])
+
+    datasets = sample_full_test_sets(test_sampler, prior, stats, n_sets=8, rng=rng)
+    assert datasets.theta.shape == (8, 2)
+    assert len(datasets.m_bbtt) == 8
+
+    rate_res, rate_post, _, _ = evaluate_rate_only_baseline(
+        test_sampler, prior, datasets.theta, datasets.n_events, n_mu=11, n_kl=13, num_samples=50, num_acauc_levels=11, rng=rng
+    )
+    assert np.isfinite(rate_res.test_nll) and rate_post.shape == (8, 11, 13)
+
+    binned = BinnedLikelihoodModel(train_sampler, stats)
+    bin_res, bin_post, _, _ = binned.evaluate(
+        datasets, prior, n_mu=11, n_kl=13, num_samples=50, num_acauc_levels=11, rng=rng
+    )
+    assert np.isfinite(bin_res.test_nll) and bin_post.shape == (8, 11, 13)
+
+    mcfg = ModelConfig(embed_dim=8, jet_hidden_dim=16, jet_num_heads=2, jet_num_layers=1, event_hidden_dim=16, event_num_blocks=1)
+    oracle = train_nre_oracle(
+        splits["train_s1"], splits["val"], prior, stats, mcfg, torch.device("cpu"),
+        epochs=1, batches_per_epoch=2, batch_size=16, mu_max_train=10.0,
+    )
+    nre_res, nre_post, _, _ = evaluate_nre_oracle_sets(
+        oracle, test_sampler, datasets, prior, torch.device("cpu"),
+        n_mu=11, n_kl=13, num_samples=50, num_acauc_levels=11, rng=rng,
+    )
+    assert np.isfinite(nre_res.test_nll) and nre_post.shape == (8, 11, 13)

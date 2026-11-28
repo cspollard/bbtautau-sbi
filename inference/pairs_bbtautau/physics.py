@@ -145,9 +145,11 @@ class ProcessSampler:
         self,
         split: SplitDataset,
         nuisance_model: NuisanceModel | None = None,
+        hh_k_factor: float = 1.0,
     ) -> None:
         self.split = split
         self.nuisance_model = nuisance_model or StatOnlyNuisanceModel()
+        self.hh_k_factor = float(hh_k_factor)
         self.backgrounds = split.backgrounds
         self.signal = split.signal
 
@@ -166,7 +168,7 @@ class ProcessSampler:
                 self.bkg_cdfs[b] = cdf / cdf[-1]
 
         sig_pool = split.processes[self.signal]
-        self.hh_weights = sig_pool.weights  # (M_hh, 3) float64: nom, kl0, kl2
+        self.hh_weights = sig_pool.weights * self.hh_k_factor  # (M_hh, 3) float64: nom, kl0, kl2
         self.hh_yield_sums = self.hh_weights.sum(axis=0)  # [sum_nom, sum_kl0, sum_kl2]
 
     def total_bkg_yield(self, psi: dict[str, float] | None = None) -> float:

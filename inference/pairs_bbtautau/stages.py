@@ -116,8 +116,8 @@ def train_stage1(
 ) -> dict[str, Any]:
     """Stage 1: Jointly pretrain per-event embedder t_omega and flow head at N in {1, 2}."""
     nuis = nuisance_model or StatOnlyNuisanceModel()
-    train_sampler = ProcessSampler(train_split, nuis)
-    val_sampler = ProcessSampler(val_split, nuis)
+    train_sampler = ProcessSampler(train_split, nuis, hh_k_factor=cfg.data.hh_k_factor)
+    val_sampler = ProcessSampler(val_split, nuis, hh_k_factor=cfg.data.hh_k_factor)
 
     model.to(device)
     model.configure_stage1(n_max=2.0)
@@ -351,7 +351,7 @@ def run_stage2(
 
     for idx, (agg_key, (pool_key, n_sets)) in enumerate(split_map.items()):
         rng = np.random.default_rng(tcfg.seed + 1000 + idx)
-        sampler = ProcessSampler(splits[pool_key], nuis)
+        sampler = ProcessSampler(splits[pool_key], nuis, hh_k_factor=cfg.data.hh_k_factor)
         agg = sampler.sample_aggregated_datasets(
             embeddings=all_embeddings[pool_key],
             prior=prior,
@@ -382,7 +382,7 @@ def run_stage2(
     in_prior = prior.in_bounds(benchmark_points)
     benchmark_points = benchmark_points[in_prior]
     if len(benchmark_points) > 0:
-        test_sampler = ProcessSampler(splits["test"], nuis)
+        test_sampler = ProcessSampler(splits["test"], nuis, hh_k_factor=cfg.data.hh_k_factor)
         rng_bench = np.random.default_rng(tcfg.seed + 9999)
         bench_agg = test_sampler.sample_aggregated_datasets(
             embeddings=all_embeddings["test"],
