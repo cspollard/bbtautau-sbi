@@ -76,7 +76,7 @@ class DataConfig:
 class ModelConfig:
     """Architecture hyperparameters for PAIRS embedder and conditional spline flow."""
 
-    embed_dim: int = 12
+    embed_dim: int = 16
     jet_hidden_dim: int = 64
     jet_num_heads: int = 4
     jet_num_layers: int = 2
@@ -109,10 +109,9 @@ class TrainConfig:
     stage1_patience: int = 10
     stage1_grad_clip: float = 1.0
     stage1_m_max: int = 2
-    stage1_importance_weighted: bool = False
-    # Wider mu_HH prior range during Stage 1 only so N in {1,2} sees strong signal-to-background
-    # contrast across kappa_lambda while preserving the exact per-event likelihood ratio basis.
-    stage1_mu_max: float | None = 300.0
+    stage1_importance_weighted: bool = True
+    # Optional wider mu_HH prior range during Stage 1 (only needed when stage1_importance_weighted=False).
+    stage1_mu_max: float | None = None
 
     # Stage 2: Embedding & dataset-level aggregate caching
     stage2_embed_batch_size: int = 2048

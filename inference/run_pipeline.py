@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--kl-max", type=float, default=10.0)
 
     # Model architecture
-    p.add_argument("--embed-dim", type=int, default=12)
+    p.add_argument("--embed-dim", type=int, default=16)
     p.add_argument("--flow-transforms", type=int, default=4)
     p.add_argument("--flow-hidden-dim", type=int, default=64)
     p.add_argument("--flow-bins", type=int, default=10)
@@ -72,8 +72,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--stage1-mu-max",
         type=float,
-        default=300.0,
-        help="Upper mu_HH bound for Stage 1 N in {1,M} pretraining; pass <=0 to match target prior.",
+        default=0.0,
+        help="Upper mu_HH bound for Stage 1 N in {1,M} pretraining; <=0 matches target prior.",
     )
     p.add_argument(
         "--stage1-m-max",
@@ -83,7 +83,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--stage1-iw",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Use importance-weighted Stage 1 loss with fixed 50/50 bkg/HH proposal q_0.",
     )
 

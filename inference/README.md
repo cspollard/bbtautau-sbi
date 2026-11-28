@@ -24,10 +24,12 @@ Training a Deep Set or Transformer posterior estimator end-to-end on $N \sim 16{
 ### Current Status & Baseline Results
 - **Scope:** Stat-only inference (no active nuisance parameters yet). The `NuisanceModel` interface in [physics.py](file:///Users/cspollard/Physics/bbtautau-sbi/inference/pairs_bbtautau/physics.py) is designed so set-level nuisances $\psi$ (e.g., background normalization, JES/JER) can be added next without changing the PAIRS pipeline.
 - **Disjoint MC splits:** Each process is split `35% / 25% / 20% / 20%` into `train_s1 / train_s3 / val / test` with `1 / split_frac` weight compensation so Stage 3 never trains on in-sample Stage 1 embeddings.
-- **Baseline metrics** (`embed_dim=12`, 2,000 test datasets, 1,000 posterior samples each; see `outputs/metrics.json`):
-  - **Test NLL (physical units):** `3.9171` (vs. Uniform Prior `5.0106`)
-  - **RMAE:** `0.2102` ($\mu_{HH}$), `0.1821` ($\kappa_\lambda$)
-  - **Calibration (ACAUC, 0 = ideal):** `0.0184` (2D HPD), `0.0176` ($\mu_{HH}$ marginal), `0.0110` ($\kappa_\lambda$ marginal)
+- **Current Baseline (2.5M `top`, NNLO $K$-factor $= 3.0$, $\ell = 16$, importance-weighted $N \in \{1, 2\}$ at physical prior $\mu_{HH} \in [0, 10]$):**
+  - **Test NLL (physical units):** `2.6241` (vs. Uniform Prior `5.0106`)
+  - **RMAE:** `0.1806` ($\mu_{HH}$), `0.0929` ($\kappa_\lambda$)
+  - **Calibration (ACAUC, 0 = exact):** `0.0161` (2D HPD), `0.0110` ($\mu_{HH}$ marginal), `0.0115` ($\kappa_\lambda$ marginal)
+  - **Expected 95% upper limit on $\mu_{HH} \mid \kappa_\lambda = 1$ ($\mu_{HH}=0$ bkg-only):** **`2.75`** (`[2.45, 3.20]`) at $100\text{ fb}^{-1}$, beating $\sqrt{\mathcal{L}}$-scaled 2026 Run 2+3 limits from ATLAS ([arXiv:2607.26879](https://arxiv.org/abs/2607.26879), `2.4` at $196\text{ fb}^{-1}$ $\to$ `~3.36`) and CMS (`CMS-PAS-HIG-25-008`, `3.9` at $172\text{ fb}^{-1}$ $\to$ `~5.11`).
+  - **Stage 1 Strategy Comparison:** Importance-weighted $N \in \{1, 2\}$ at the physical prior (`Test NLL = 2.62`, `ACAUC = 0.016`, `~4 min` on MPS) outperformed both standard $N \in \{1, 2\}$ with boosted $\mu_{HH} \le 300$ (`Test NLL = 3.19`, `ACAUC = 0.142`) and $N \in \{1, 16\}$ with boosted $\mu_{HH} \le 300$ (`Test NLL = 2.80`, `ACAUC = 0.014`, `~18 min`, `95% UL = 4.90`), and is now the default (`--stage1-iw` with `--stage1-mu-max 0`).
 
 ---
 
@@ -39,7 +41,7 @@ Training a Deep Set or Transformer posterior estimator end-to-end on $N \sim 16{
 - **Event Selection** (applied on the full jet list before padding/truncating to `max_jets=12`):
   - Exactly $2$ $b$-tagged jets and $2$ $\tau$-tagged (non-$b$) jets
   - $m_{bb\tau\tau} > 200\text{ GeV}$, $75 < m_{bb} < 150\text{ GeV}$, $50 < m_{\tau\tau} < 125\text{ GeV}$
-- **Stage 1 Signal Contrast:** At $100\text{ fb}^{-1}$, SM $HH$ is only ~9.3 events against ~16,429 background events (~1.4% average signal fraction over $\mu_{HH} \in [0, 10]$). Stage 1 pretraining therefore uses `--stage1-mu-max 300.0` by default so $N \in \{1, 2\}$ sets see strong $\kappa_\lambda$-dependent kinematic contrast, while Stages 2 and 3 use the exact $100\text{ fb}^{-1}$ luminosity and target prior.
+- **Stage 1 Signal Contrast:** At $100\text{ fb}^{-1}$, SM $HH$ is only ~9.3 events (LO) or ~28 events (NNLO $K=3$) against ~16,732 background events. By default, Stage 1 uses importance-weighted sampling (`--stage1-iw`) from a 50/50 `HH`/background proposal at the exact physical prior $\mu_{HH} \in [0, 10]$ (see [WeightedPAIRS.md](file:///Users/cspollard/Physics/bbtautau-sbi/inference/WeightedPAIRS.md)), giving strong $\kappa_\lambda$-kinematic gradients in every batch without distorting the prior.
 - **Finite-MC Regularization:** Because `top` and `DYbb` currently have limited effective luminosity ($L_{\text{eff}} \approx 137\text{--}139\text{ fb}^{-1}$ total, $\approx 28\text{--}35\text{ fb}^{-1}$ per split), Stage 3 applies analytical finite-MC covariance augmentation to $\bar{T}$ by default (`--no-stage3-mc-aug` to disable).
 
 ---
