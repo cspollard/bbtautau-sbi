@@ -48,16 +48,20 @@ Training a Deep Set or Transformer posterior estimator end-to-end on $N \sim 16{
 
 ## 3. Code Structure
 
-- `run_pipeline.py` — CLI entrypoint (`--stage {all,prepare,stage1,stage2,stage3,eval}`)
+- `run_pipeline.py` — CLI entrypoint (`--stage {all,prepare,stage1,stage2,stage3,eval}`, `--k-factor`, `--nuisances`)
+- `run_benchmarks.py` — Reference/oracle posterior comparison (`rate_only`, `binned_2d`, optional `--with-nre-oracle`, and trained PAIRS; supports `--smoke`)
+- `scan_embed_dim.py` — Embedding dimension $\ell$ sweep across seeds (supports `--smoke`)
+- `check_llr_embedding.py` — Cheap Stage 1 sufficiency check: compares raw-event oracle $\ln(p_s/p_b)$ vs. linear/MLP probes on frozen $t_\omega(x)$
 - `pairs_bbtautau/`
-  - `config.py` — `PriorConfig`, `DataConfig`, `ModelConfig`, `TrainConfig`, `PairsConfig`, device/seed helpers
+  - `config.py` — `PriorConfig`, `DataConfig`, `ModelConfig`, `TrainConfig`, `NuisanceConfig`, `PairsConfig`, device/seed helpers
   - `data.py` — CSV parsing, event selection, feature engineering, `.npz` caching, 4-way disjoint splitting
-  - `physics.py` — quadratic $\kappa_\lambda$ reweighting, `UniformPrior2D`, `NuisanceModel` / `StatOnlyNuisanceModel`, `ProcessSampler`
+  - `physics.py` — quadratic $\kappa_\lambda$ reweighting, `UniformPrior2D`, `NuisanceModel` (`StatOnlyNuisanceModel`, `LogNormalNormNuisanceModel`), `ProcessSampler`
   - `models.py` — `PerEventEmbedder`, `ConditionalSplineFlow2D`, `PairsModel`
   - `stages.py` — Stage 1 training, Stage 2 embedding & Poisson aggregate caching, Stage 3 flow finetuning
+  - `benchmarks.py` — centralized grid-posterior evaluator, Rate-only baseline, Binned 2D Poisson likelihood, and $N=1$ NRE unbinned oracle
   - `metrics.py` — physical-unit Test NLL, MAE/RMAE, 2D HPD & 1D marginal ACAUC
   - `plotting.py` — loss curves, yield curve, SM & grid 2D posterior contours, recovery/pulls, calibration plot
-- `tests/test_pairs.py` — unit and end-to-end smoke tests
+- `tests/test_pairs.py` — unit and smoke tests
 
 ---
 
@@ -110,6 +114,10 @@ cd /Users/cspollard/Physics/bbtautau-sbi/inference
   --stage1-epochs 60 --stage1-batches 300 \
   --stage2-train-sets 50000 --stage2-val-sets 8000 --stage2-test-sets 5000 \
   --stage3-epochs 120 --eval-samples 2000
+
+# Cheap Stage 1 embedding sufficiency check (~20s on MPS): raw oracle vs frozen t_omega(x) ln(p_s/p_b)
+.venv/bin/python check_llr_embedding.py --device mps \
+  --checkpoint outputs/checkpoints/stage1_best.pt --output-dir outputs
 ```
 
 Outputs are written to `outputs/` (`stage1_best.pt`, `stage2_aggregates.pt`, `stage3_best.pt`, `metrics.json`, and diagnostic figures in `outputs/figs/`).
@@ -118,7 +126,8 @@ Outputs are written to `outputs/` (`stage1_best.pt`, `stage2_aggregates.pt`, `st
 
 ## 6. Planned Next Steps
 
-1. **Verify Optimality Against Reference Posteriors (Beyond Coverage)**
+1. **Verify Optimality Against Reference Posteriors & Embedding Sufficiency (Beyond Coverage)**
+   - **Cheap 1-event LLR sufficiency check (`check_llr_embedding.py`):** Recommended diagnostic for every new run (~20s on MPS) — verifies that linear/MLP probes on frozen $t_\omega(x)$ recover the raw-event oracle $\ln(p_s/p_b)$ (baseline achieved `AUC = 0.941` vs. raw `0.950`, $r = 0.954$).
    - **Rate-only analytical baseline:** Compute the exact Poisson-count posterior $p(\theta \mid N)$ on the test set to quantify the pure kinematic gain from $\bar{T}$.
    - **Binned likelihood reference:** Evaluate exact binned Poisson posteriors (e.g. in $(m_{bb\tau\tau}, m_{bb})$ or a learned classifier score) on benchmark test points.
    - **Stat-only unbinned NRE / likelihood-ratio oracle:** Because events are conditionally independent given $\theta$ in the stat-only setting, an $N=1$ classifier/likelihood-ratio oracle gives a direct grid/MCMC reference for $\log p(X_N \mid \theta) = \log \mathrm{Pois}(N \mid \Lambda(\theta)) + \sum_{i=1}^N \log r(x_i \mid \theta)$ to test whether PAIRS converges to *the* true posterior and separate any PAIRS approximation gap from physics/MC limits.
