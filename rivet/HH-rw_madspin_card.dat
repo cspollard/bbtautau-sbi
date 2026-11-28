@@ -1,0 +1,5 @@
+set spinmode none
+set max_weight_ps_point 400
+decay h > b b~
+decay h > ta+ ta-
+launch

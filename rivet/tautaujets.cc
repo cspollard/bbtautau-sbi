@@ -4,8 +4,9 @@
 #include "Rivet/Projections/FinalState.hh"
 #include "Rivet/Projections/PromptFinalState.hh"
 #include "Rivet/Projections/VetoedFinalState.hh"
+#include "Rivet/Projections/VisibleFinalState.hh"
 #include "Rivet/Projections/IdentifiedFinalState.hh"
-#include "Rivet/Projections/DressedLeptons.hh"
+#include "Rivet/Projections/LeptonFinder.hh"
 #include "Rivet/Projections/FastJets.hh"
 
 
@@ -49,10 +50,10 @@ namespace Rivet {
 
       Cut leptoncuts = Cuts::abseta < 2.5 && Cuts::pT > 25*GeV;
 
-      DressedLeptons dressedelectrons(photons, electrons, 0.1, leptoncuts);
+      LeptonFinder dressedelectrons(electrons, photons, 0.1, leptoncuts);
       declare(dressedelectrons, "dressedelectrons");
 
-      DressedLeptons dressedmuons(photons, muons, 0.1, leptoncuts);
+      LeptonFinder dressedmuons(muons, photons, 0.1, leptoncuts);
       declare(dressedmuons, "dressedmuons");
 
       VetoedFinalState jetfs(vfs);
@@ -62,9 +63,9 @@ namespace Rivet {
 
       FastJets jets
         ( jetfs
-        , FastJets::ANTIKT
+        , JetAlg::ANTIKT
         , 0.4
-        , JetAlg::Muons::NONE, JetAlg::Invisibles::NONE
+        , JetMuons::NONE, JetInvisibles::NONE
         );
 
       declare(jets, "jets");

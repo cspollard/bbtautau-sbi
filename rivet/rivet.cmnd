@@ -9,10 +9,10 @@ Next:numberShowProcess = 1         ! print process record n times
 Next:numberShowEvent = 1           ! print event record n times
 Stat:showPartonLevel = on          ! additional statistics on MPI
 
-Main:runRivet = on              ! Run Rivet (specify analyses below)
+Init:plugins = {libpythia8rivet.so::RivetHooks}
 Main:writeHepMC = off           ! Write .hepmc events to a file.
 Main:writeRoot = off            ! Write particle level output to a root file
-Main:outputLog = on             ! Put all printed output to a log file.
+Main:writeLog = on              ! Put all printed output to a log file.
 
 25:onMode = off
 25:onIfAny = 5 15

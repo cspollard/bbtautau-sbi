@@ -1,0 +1,5 @@
+change rwgt_dir rwgt
+launch --rwgt_name=kl0
+    set BSMINPUTS 1 0.0
+launch --rwgt_name=kl2
+    set BSMINPUTS 1 2.0
