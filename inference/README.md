@@ -118,11 +118,14 @@ Outputs are written to `outputs/` (`stage1_best.pt`, `stage2_aggregates.pt`, `st
 
 1. **Verify Optimality Against Reference Posteriors (Beyond Coverage)**
    - **Rate-only analytical baseline:** Compute the exact Poisson-count posterior $p(\theta \mid N)$ on the test set to quantify the pure kinematic gain from $\bar{T}$.
-   - **Binned likelihood reference:** Evaluate exact binned Poisson posteriors (e.g. in $m_{bb\tau\tau}$ and $m_{bb}$ or a learned classifier score) on benchmark test points.
-   - **Stat-only unbinned NRE / likelihood-ratio oracle:** Because events are conditionally independent given $\theta$ in the stat-only setting, an $N=1$ classifier/likelihood-ratio oracle gives a direct grid/MCMC reference for $\log p(X_N \mid \theta) = \log \mathrm{Pois}(N \mid \Lambda(\theta)) + \sum_{i=1}^N \log r(x_i \mid \theta)$ to test whether PAIRS converges to *the* true posterior (not merely a calibrated one).
+   - **Binned likelihood reference:** Evaluate exact binned Poisson posteriors (e.g. in $(m_{bb\tau\tau}, m_{bb})$ or a learned classifier score) on benchmark test points.
+   - **Stat-only unbinned NRE / likelihood-ratio oracle:** Because events are conditionally independent given $\theta$ in the stat-only setting, an $N=1$ classifier/likelihood-ratio oracle gives a direct grid/MCMC reference for $\log p(X_N \mid \theta) = \log \mathrm{Pois}(N \mid \Lambda(\theta)) + \sum_{i=1}^N \log r(x_i \mid \theta)$ to test whether PAIRS converges to *the* true posterior and separate any PAIRS approximation gap from physics/MC limits.
 2. **Embedding Dimension $\ell$ Scan**
    - Sweep `--embed-dim` $\ell \in \{2, 4, 8, 12, 16, 32, 64, 128\}$ across seeds and compare Stage 1 Val NLL, Stage 3 Test NLL, RMAE, and ACAUC to locate the sufficiency saturation threshold ($\ell \ge k$ in Theorem 1 / Corollary 2).
-3. **MC Statistics & Nuisance Parameters**
-   - Rebuild the cache with expanded `top` (2M+ events) and `DYbb` MC samples to remove the finite-MC bottleneck.
+3. **MC Statistics, Signal Normalization, and Preselection**
+   - **Expanded MC:** Rebuild the cache with the 2M+ `top` run (and expanded `DYbb` / `ZH` samples) to remove the finite-MC bottleneck ($L_{\text{eff, split}} \approx 28\text{--}35\text{ fb}^{-1}$), which currently causes early Stage 1 overfitting and forces Stage 3 MC-covariance broadening.
+   - **NNLO+NNLL $HH$ $K$-factor & experimental benchmark:** Current `HH.csv` uses LO `loop_sm_hh` ($\sigma_{\text{SM}} \approx 0.76\text{ fb}$ vs. $\sim 2.27\text{ fb}$ at NNLO+NNLL), yielding $\mu_{HH}^{95\%} = 9.35$ at $\kappa_\lambda = 1$ vs. ATLAS `3.9` ($139\text{ fb}^{-1}$) and CMS `5.2` ($138\text{ fb}^{-1}$). Apply/compare with the NNLO+NNLL $K$-factor (~$3\times$) to benchmark truth-level stat-only sensitivity directly against Run 2 limits.
+   - **Preselection:** Require $\ge 4$ jets with $\ge 2$ $b$-tagged and $\ge 2$ $\tau$-tagged jets as a preselection (currently enforced offline as exact $2b+2\tau$; moving a $\ge 4$-jet, $\ge 2b$, $\ge 2\tau$ preselection upstream into Rivet/CSV generation will keep CSVs compact where $S/B$ is negligible) and explore tighter kinematic/mass-window cuts to suppress the `top`/`DYbb` background (`16,429` events at $100\text{ fb}^{-1}$).
+4. **Nuisance Parameters**
    - Enable set-level nuisance parameters $\psi$ (background normalizations, JES/JER) via `NuisanceModel` in [physics.py](file:///Users/cspollard/Physics/bbtautau-sbi/inference/pairs_bbtautau/physics.py).
 
