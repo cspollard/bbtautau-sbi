@@ -1,0 +1,29 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python / test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Datasets and preprocessed caches
+*.csv
+cache/
+*.npz
+*.npy
+
+# Training outputs, model weights, and figures
+outputs/
+checkpoints/
+figs/
+figs.*/
+*.pt
+*.pth
+*.ckpt
+*.png
+*.pdf
+
+# OS files
+.DS_Store
