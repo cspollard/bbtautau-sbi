@@ -98,7 +98,7 @@ class TrainConfig:
     seed: int = 123
     device: Literal["auto", "cpu", "mps", "cuda"] = "auto"
 
-    # Stage 1: PAIRS pretraining on N in {1, 2}
+    # Stage 1: PAIRS pretraining on N in {1, M} (default M=2)
     stage1_epochs: int = 30
     stage1_batches_per_epoch: int = 150
     stage1_batch_size: int = 512
@@ -108,6 +108,8 @@ class TrainConfig:
     stage1_warmup_frac: float = 0.05
     stage1_patience: int = 10
     stage1_grad_clip: float = 1.0
+    stage1_m_max: int = 2
+    stage1_importance_weighted: bool = False
     # Wider mu_HH prior range during Stage 1 only so N in {1,2} sees strong signal-to-background
     # contrast across kappa_lambda while preserving the exact per-event likelihood ratio basis.
     stage1_mu_max: float | None = 300.0

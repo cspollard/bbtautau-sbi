@@ -119,10 +119,16 @@ def train_stage1(
     train_sampler = ProcessSampler(train_split, nuis, hh_k_factor=cfg.data.hh_k_factor)
     val_sampler = ProcessSampler(val_split, nuis, hh_k_factor=cfg.data.hh_k_factor)
 
-    model.to(device)
-    model.configure_stage1(n_max=2.0)
-
     tcfg = cfg.train
+    m_max = max(2, int(tcfg.stage1_m_max))
+    model.to(device)
+    model.configure_stage1(n_max=float(m_max))
+
+    def _sample_sizes(n: int, rng: np.random.Generator) -> np.ndarray:
+        if m_max == 2:
+            return rng.integers(1, 3, size=n)
+        return np.where(rng.integers(0, 2, size=n) == 0, 1, m_max)
+
     rng_train = np.random.default_rng(tcfg.seed + 101)
     rng_val = np.random.default_rng(tcfg.seed + 202)
     mu_max_s1 = tcfg.stage1_mu_max
@@ -141,15 +147,15 @@ def train_stage1(
         torch.tensor(prior_s1.std, dtype=torch.float32),
     )
 
-    # Pre-generate fixed validation sets at N in {1, 2} for deterministic early stopping
+    # Pre-generate fixed validation sets at N in {1, M} for deterministic early stopping
     val_n_sets = tcfg.stage1_val_sets
     val_theta_np = prior_s1.sample(val_n_sets, rng_val)
-    val_sizes = rng_val.integers(1, 3, size=val_n_sets)
+    val_sizes = _sample_sizes(val_n_sets, rng_val)
     val_psi = nuis.sample_prior(val_n_sets, rng_val)
     val_jf, val_jm, val_ef = val_sampler.sample_small_sets_batch(
         val_theta_np, val_sizes, rng_val, psi=val_psi
     )
-    val_emask = torch.arange(2)[None, :] < torch.from_numpy(val_sizes)[:, None]
+    val_emask = torch.arange(m_max)[None, :] < torch.from_numpy(val_sizes)[:, None]
     val_theta = torch.from_numpy(val_theta_np)
 
     optimizer = torch.optim.AdamW(
@@ -182,10 +188,17 @@ def train_stage1(
         )
         for _ in pbar:
             theta_np = prior_s1.sample(tcfg.stage1_batch_size, rng_train)
-            sizes = rng_train.integers(1, 3, size=tcfg.stage1_batch_size)
+            sizes = _sample_sizes(tcfg.stage1_batch_size, rng_train)
             psi = nuis.sample_prior(tcfg.stage1_batch_size, rng_train)
-            jf, jm, ef = train_sampler.sample_small_sets_batch(theta_np, sizes, rng_train, psi=psi)
-            em = torch.arange(2)[None, :] < torch.from_numpy(sizes)[:, None]
+            if tcfg.stage1_importance_weighted:
+                jf, jm, ef, iw = train_sampler.sample_small_sets_importance_weighted(
+                    theta_np, sizes, rng_train, psi=psi
+                )
+                iw_t = iw.to(device)
+            else:
+                jf, jm, ef = train_sampler.sample_small_sets_batch(theta_np, sizes, rng_train, psi=psi)
+                iw_t = None
+            em = torch.arange(m_max)[None, :] < torch.from_numpy(sizes)[:, None]
 
             th_t = torch.from_numpy(theta_np).to(device)
             jf = jf.to(device)
@@ -194,7 +207,8 @@ def train_stage1(
             em = em.to(device)
 
             optimizer.zero_grad(set_to_none=True)
-            loss = model.nll_from_sets(th_t, jf, jm, ef, em).mean()
+            nll_vec = model.nll_from_sets(th_t, jf, jm, ef, em)
+            loss = (iw_t * nll_vec).mean() if iw_t is not None else nll_vec.mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=tcfg.stage1_grad_clip)
             optimizer.step()

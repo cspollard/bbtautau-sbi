@@ -392,3 +392,63 @@ def test_benchmarks_rate_binned_and_nre_oracle() -> None:
         n_mu=11, n_kl=13, num_samples=50, num_acauc_levels=11, rng=rng,
     )
     assert np.isfinite(nre_res.test_nll) and nre_post.shape == (8, 11, 13)
+
+
+def test_stage1_importance_weighted_and_m_max(tmp_path: Path) -> None:
+    """Verify importance-weighted Stage 1 unbiasedness and Corollary 3 M>2 training."""
+    rng = np.random.default_rng(77)
+
+    def _make_proc(name: str, n_ev: int, w_cols: int, total_yield: float) -> ProcessData:
+        raw_jets = np.zeros((n_ev, 6, 6), dtype=np.float32)
+        raw_jets[:, :4, 3:6] = rng.normal(0.0, 20.0, size=(n_ev, 4, 3)).astype(np.float32)
+        raw_jets[:, :2, 0] = 1.0
+        raw_jets[:, 2:4, 2] = 1.0
+        jmask = np.zeros((n_ev, 6), dtype=bool)
+        jmask[:, :4] = True
+        invs = rng.normal(0.0, 1.0, size=(n_ev, 16)).astype(np.float32)
+        weights = np.full((n_ev, w_cols), total_yield / n_ev, dtype=np.float64)
+        if w_cols == 3:
+            weights[:, 1] *= 1.4
+            weights[:, 2] *= 0.8
+        return ProcessData(
+            name=name,
+            raw_jets=raw_jets,
+            jet_mask=jmask,
+            evt_invariants=invs,
+            weights=weights,
+            n_gen=n_ev,
+            n_csv_events=n_ev,
+        )
+
+    procs = {"top": _make_proc("top", 100, 1, 50.0), "HH": _make_proc("HH", 100, 3, 10.0)}
+    data_cfg = DataConfig(backgrounds=("top",), signal="HH", lumi_pb_inv=1.0, max_jets=6)
+    splits, stats = build_splits(procs, data_cfg)
+    prior = UniformPrior2D(PriorConfig(mu_min=0.0, mu_max=5.0, kl_min=-2.0, kl_max=4.0))
+
+    sampler = ProcessSampler(splits["train_s1"])
+    thetas = prior.sample(4096, rng)
+    sizes = np.where(rng.integers(0, 2, size=4096) == 0, 1, 4)
+    _, _, _, iw = sampler.sample_small_sets_importance_weighted(thetas, sizes, rng)
+    assert iw.shape == (4096,)
+    assert abs(float(iw.mean()) - 1.0) < 0.1
+
+    cfg = PairsConfig(
+        prior=prior.cfg,
+        data=data_cfg,
+        model=ModelConfig(
+            embed_dim=8, jet_hidden_dim=16, jet_num_heads=2, jet_num_layers=1,
+            event_hidden_dim=16, event_num_blocks=1, flow_num_transforms=2,
+            flow_hidden_dim=16, flow_num_blocks=1, flow_num_bins=6, context_hidden_dim=16,
+        ),
+        train=TrainConfig(
+            seed=11, device="cpu", stage1_epochs=2, stage1_batches_per_epoch=3,
+            stage1_batch_size=16, stage1_val_sets=32, stage1_m_max=4,
+            stage1_importance_weighted=True,
+        ),
+        output_dir=tmp_path / "iw_out",
+    )
+    model = PairsModel(
+        11, 16, torch.tensor(prior.mean, dtype=torch.float32), torch.tensor(prior.std, dtype=torch.float32), cfg.model
+    )
+    hist = train_stage1(model, splits["train_s1"], splits["val"], prior, stats, cfg, torch.device("cpu"))
+    assert len(hist["val_nll"]) == 2 and np.isfinite(hist["val_nll"]).all()

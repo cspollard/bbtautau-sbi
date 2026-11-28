@@ -73,7 +73,18 @@ def parse_args() -> argparse.Namespace:
         "--stage1-mu-max",
         type=float,
         default=300.0,
-        help="Upper mu_HH bound for Stage 1 N in {1,2} pretraining; pass <=0 to match target prior.",
+        help="Upper mu_HH bound for Stage 1 N in {1,M} pretraining; pass <=0 to match target prior.",
+    )
+    p.add_argument(
+        "--stage1-m-max",
+        type=int,
+        default=2,
+        help="Second cardinality M >= 2 for Stage 1 N in {1, M} pretraining (Corollary 3).",
+    )
+    p.add_argument(
+        "--stage1-iw",
+        action="store_true",
+        help="Use importance-weighted Stage 1 loss with fixed 50/50 bkg/HH proposal q_0.",
     )
 
     # Stage 2 caching
@@ -127,6 +138,8 @@ def build_config(args: argparse.Namespace) -> PairsConfig:
             stage1_lr=args.stage1_lr,
             stage1_patience=args.stage1_patience,
             stage1_mu_max=s1_mu_max,
+            stage1_m_max=args.stage1_m_max,
+            stage1_importance_weighted=args.stage1_iw,
             stage2_n_train_sets=args.stage2_train_sets,
             stage2_n_val_sets=args.stage2_val_sets,
             stage2_n_test_sets=args.stage2_test_sets,

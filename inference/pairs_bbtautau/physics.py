@@ -170,6 +170,10 @@ class ProcessSampler:
         sig_pool = split.processes[self.signal]
         self.hh_weights = sig_pool.weights * self.hh_k_factor  # (M_hh, 3) float64: nom, kl0, kl2
         self.hh_yield_sums = self.hh_weights.sum(axis=0)  # [sum_nom, sum_kl0, sum_kl2]
+        # Fixed envelope proposal for importance-weighted Stage 1
+        self.hh_env_weights = np.maximum(np.max(np.abs(self.hh_weights), axis=1), 1e-12)
+        self.hh_env_sum = float(self.hh_env_weights.sum())
+        self.hh_env_cdf = np.cumsum(self.hh_env_weights) / self.hh_env_sum
 
     def total_bkg_yield(self, psi: dict[str, float] | None = None) -> float:
         return sum(
@@ -329,6 +333,113 @@ class ProcessSampler:
             torch.from_numpy(out_jets),
             torch.from_numpy(out_jmask),
             torch.from_numpy(out_evts),
+        )
+
+    def sample_small_sets_importance_weighted(
+        self,
+        theta: np.ndarray,
+        set_sizes: np.ndarray,
+        rng: np.random.Generator,
+        psi: NuisanceSample | None = None,
+        sig_proposal_frac: float = 0.5,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Sample Stage 1 sets from a fixed 50/50 bkg/HH proposal q_0 and return exact IW weights.
+
+        Eliminates per-theta CDF resampling and supports signed event weights.
+        Returns (jet_feats, jet_mask, evt_feats, iw_weights) with iw_weights shape (B,).
+        """
+        batch_size = int(theta.shape[0])
+        max_n = int(set_sizes.max())
+
+        # Compute total expected yield Lambda(theta, psi) per set
+        total_bkg_nom = self.total_bkg_yield(None)
+        bkg_yields_mat = np.empty((batch_size, len(self.backgrounds)), dtype=np.float64)
+        for idx, b in enumerate(self.backgrounds):
+            if psi is not None and psi.values:
+                mults = np.array(
+                    [self.nuisance_model.process_rate_multiplier(b, psi.slice(i)) for i in range(batch_size)],
+                    dtype=np.float64,
+                )
+            else:
+                mults = 1.0
+            bkg_yields_mat[:, idx] = self.bkg_yields[b] * mults
+
+        hh_y = self.hh_expected_yield(theta[:, 0], theta[:, 1])
+        if psi is not None and psi.values:
+            hh_mults = np.array(
+                [self.nuisance_model.process_rate_multiplier(self.signal, psi.slice(i)) for i in range(batch_size)],
+                dtype=np.float64,
+            )
+        else:
+            hh_mults = np.ones(batch_size, dtype=np.float64)
+        hh_y = hh_y * hh_mults
+        lam_total = np.maximum(bkg_yields_mat.sum(axis=1) + hh_y, 1e-12)
+
+        sample_pool = self.split.processes[self.signal]
+        max_jets = sample_pool.jet_features.shape[1]
+        f_jet = sample_pool.jet_features.shape[2]
+        f_evt = sample_pool.evt_features.shape[1]
+
+        out_jets = np.zeros((batch_size, max_n, max_jets, f_jet), dtype=np.float32)
+        out_jmask = np.zeros((batch_size, max_n, max_jets), dtype=bool)
+        out_evts = np.zeros((batch_size, max_n, f_evt), dtype=np.float32)
+
+        slot_valid = np.arange(max_n)[None, :] < set_sizes[:, None]
+        is_sig = rng.uniform(0.0, 1.0, size=(batch_size, max_n)) < sig_proposal_frac
+        slot_ratios = np.ones((batch_size, max_n), dtype=np.float64)
+
+        # Background slots drawn from fixed nominal background mixture q_0
+        bkg_probs = np.array([self.bkg_yields[b] for b in self.backgrounds], dtype=np.float64)
+        bkg_probs = bkg_probs / max(bkg_probs.sum(), 1e-12)
+        bkg_cdf = np.cumsum(bkg_probs)
+
+        bkg_rows, bkg_cols = np.nonzero(slot_valid & (~is_sig))
+        if len(bkg_rows) > 0:
+            pids = np.searchsorted(bkg_cdf, rng.uniform(0.0, 1.0, size=len(bkg_rows)), side="right").clip(
+                0, len(self.backgrounds) - 1
+            )
+            for pid, b in enumerate(self.backgrounds):
+                sel = pids == pid
+                if not np.any(sel):
+                    continue
+                r_sub = bkg_rows[sel]
+                c_sub = bkg_cols[sel]
+                ev_idx = self._draw_process_indices(b, len(r_sub), 1.0, rng)
+                pool = self.split.processes[b]
+                out_jets[r_sub, c_sub] = pool.jet_features[ev_idx]
+                out_jmask[r_sub, c_sub] = pool.jet_mask[ev_idx]
+                out_evts[r_sub, c_sub] = pool.evt_features[ev_idx]
+                mult_b = bkg_yields_mat[r_sub, pid] / max(self.bkg_yields[b], 1e-12)
+                slot_ratios[r_sub, c_sub] = (mult_b * total_bkg_nom) / (
+                    (1.0 - sig_proposal_frac) * lam_total[r_sub]
+                )
+
+        # Signal slots drawn from fixed HH envelope q_0
+        sig_rows, sig_cols = np.nonzero(slot_valid & is_sig)
+        if len(sig_rows) > 0:
+            ev_idx = np.searchsorted(
+                self.hh_env_cdf, rng.uniform(0.0, 1.0, size=len(sig_rows)), side="right"
+            ).clip(0, sample_pool.num_events - 1)
+            out_jets[sig_rows, sig_cols] = sample_pool.jet_features[ev_idx]
+            out_jmask[sig_rows, sig_cols] = sample_pool.jet_mask[ev_idx]
+            out_evts[sig_rows, sig_cols] = sample_pool.evt_features[ev_idx]
+
+            w_target = compute_hh_weights(
+                self.hh_weights[ev_idx],
+                mu_hh=theta[sig_rows, 0],
+                kappa_lambda=theta[sig_rows, 1],
+                clamp_negative=False,
+            ) * hh_mults[sig_rows]
+            slot_ratios[sig_rows, sig_cols] = (w_target * self.hh_env_sum) / (
+                sig_proposal_frac * self.hh_env_weights[ev_idx] * lam_total[sig_rows]
+            )
+
+        iw_weights = np.prod(slot_ratios, axis=1).astype(np.float32)
+        return (
+            torch.from_numpy(out_jets),
+            torch.from_numpy(out_jmask),
+            torch.from_numpy(out_evts),
+            torch.from_numpy(iw_weights),
         )
 
     def sample_aggregated_datasets(
