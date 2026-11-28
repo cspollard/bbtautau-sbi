@@ -111,3 +111,18 @@ cd /Users/cspollard/Physics/bbtautau-sbi/inference
 ```
 
 Outputs are written to `outputs/` (`stage1_best.pt`, `stage2_aggregates.pt`, `stage3_best.pt`, `metrics.json`, and diagnostic figures in `outputs/figs/`).
+
+---
+
+## 6. Planned Next Steps
+
+1. **Verify Optimality Against Reference Posteriors (Beyond Coverage)**
+   - **Rate-only analytical baseline:** Compute the exact Poisson-count posterior $p(\theta \mid N)$ on the test set to quantify the pure kinematic gain from $\bar{T}$.
+   - **Binned likelihood reference:** Evaluate exact binned Poisson posteriors (e.g. in $m_{bb\tau\tau}$ and $m_{bb}$ or a learned classifier score) on benchmark test points.
+   - **Stat-only unbinned NRE / likelihood-ratio oracle:** Because events are conditionally independent given $\theta$ in the stat-only setting, an $N=1$ classifier/likelihood-ratio oracle gives a direct grid/MCMC reference for $\log p(X_N \mid \theta) = \log \mathrm{Pois}(N \mid \Lambda(\theta)) + \sum_{i=1}^N \log r(x_i \mid \theta)$ to test whether PAIRS converges to *the* true posterior (not merely a calibrated one).
+2. **Embedding Dimension $\ell$ Scan**
+   - Sweep `--embed-dim` $\ell \in \{2, 4, 8, 12, 16, 32, 64, 128\}$ across seeds and compare Stage 1 Val NLL, Stage 3 Test NLL, RMAE, and ACAUC to locate the sufficiency saturation threshold ($\ell \ge k$ in Theorem 1 / Corollary 2).
+3. **MC Statistics & Nuisance Parameters**
+   - Rebuild the cache with expanded `top` (2M+ events) and `DYbb` MC samples to remove the finite-MC bottleneck.
+   - Enable set-level nuisance parameters $\psi$ (background normalizations, JES/JER) via `NuisanceModel` in [physics.py](file:///Users/cspollard/Physics/bbtautau-sbi/inference/pairs_bbtautau/physics.py).
+
