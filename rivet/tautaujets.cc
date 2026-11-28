@@ -72,9 +72,10 @@ namespace Rivet {
 
 
       csv = ofstream();
-      const string& csvname = getOption("csvname");
+      csvname = getOption("csvname");
       weighted = getOption("weighted") == "true";
-      cout << "writing to csv file " << csvname << endl;
+      weightscale = getOption<double>("weightscale", 1.0);
+      cout << "writing to csv file " << csvname << " (weightscale=" << weightscale << ")" << endl;
 
       csv.open(csvname);
 
@@ -124,15 +125,24 @@ namespace Rivet {
           .jetsByPt(Cuts::abseta < 2.5 && Cuts::pT > 20*GeV);
 
       vector<bool> btags, ctags, tautags;
+      int n_b = 0, n_tau = 0;
 
       for (const auto& j : jets) {
         bool btag = j.bTagged();
         bool ctag = j.cTagged();
         bool tautag = !btag && j.tauTagged();
 
+        if (btag) n_b++;
+        if (tautag) n_tau++;
+
         btags.push_back(btag);
         ctags.push_back(ctag);
         tautags.push_back(tautag);
+      }
+
+      if (jets.size() < 4 || n_b < 2 || n_tau < 2) {
+        eventnumber++;
+        return;
       }
 
       const GenEvent* genevent = event.genEvent();
@@ -143,7 +153,7 @@ namespace Rivet {
         bool btag = btags.at(i);
         bool ctag = ctags.at(i);
         bool tautag = tautags.at(i);
-        double wnom = wgts[0];
+        double wnom = wgts[0] * weightscale;
 
         csv
           << eventnumber
@@ -183,13 +193,20 @@ namespace Rivet {
 
 
     /// Normalise histograms etc., after the run
-    void finalize() { csv.close(); }
+    void finalize() {
+      csv.close();
+      ofstream meta(csvname + ".meta");
+      meta << "n_gen=" << eventnumber << endl;
+      meta.close();
+    }
 
 
     /// @}
 
     private:
       bool weighted;
+      double weightscale;
+      string csvname;
       ofstream csv;
       int eventnumber;
 

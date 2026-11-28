@@ -1,0 +1,4 @@
+! Force hadronic tau decays in Pythia 8 (disable tau -> e nu nu and tau -> mu nu nu).
+! BR(tau -> hadrons) = 0.6496096 in Pythia 8.318 ParticleData.xml, so BR^2 = 0.4219926.
+15:2:onMode = off
+15:3:onMode = off

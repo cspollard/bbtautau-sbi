@@ -1,8 +1,8 @@
-set nb_core 4
+set nb_core 7
 generate p p > z h > ta+ ta- b b~
 output ZH
 launch ZH
-set nevents 500000
+set nevents 100000
 set ebeam1 7000
 set ebeam2 7000
 set mmbb 50

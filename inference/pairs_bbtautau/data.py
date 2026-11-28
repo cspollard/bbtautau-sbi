@@ -271,7 +271,17 @@ def parse_and_select_process(
         raise ValueError(f"Event numbers in {csv_path} are not strictly increasing per event block")
 
     n_csv_events = int(len(starts))
-    n_gen = int(evnum.max()) + 1
+    meta_path = Path(f"{csv_path}.meta")
+    if meta_path.exists():
+        n_gen = None
+        for line in meta_path.read_text().splitlines():
+            if line.startswith("n_gen="):
+                n_gen = int(line.split("=", 1)[1].strip())
+                break
+        if n_gen is None:
+            raise ValueError(f"Missing n_gen= in {meta_path}")
+    else:
+        n_gen = int(evnum.max()) + 1
     counts = ends - starts
     max_full = int(counts.max())
 
